@@ -1,5 +1,6 @@
 # app/core/config.py
 from functools import lru_cache
+from urllib.parse import quote_plus
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -11,6 +12,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="ignore",
+        populate_by_name=True,
     )
 
     app_name: str = Field("OrkaFlow API", alias="APP_NAME")
@@ -33,14 +35,17 @@ class Settings(BaseSettings):
 
     @property
     def database_url(self) -> str:
-        driver = self.DB_DRIVER.replace(" ", "+")
+        user = quote_plus(self.db_user)
+        password = quote_plus(self.db_password)
+        driver = quote_plus(self.db_driver)
+
         return (
-            f"mssql+pyodbc://{self.DB_USER}:{self.DB_PASSWORD}"
-            f"@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
+            f"mssql+pyodbc://{user}:{password}"
+            f"@{self.db_host}:{self.db_port}/{self.db_name}"
             f"?driver={driver}"
             f"&TrustServerCertificate=yes"
             f"&Encrypt=yes"
-            f"&Connection Timeout={self.DB_TIMEOUT}"
+            f"&Connection Timeout={self.db_timeout}"
         )
 
 
