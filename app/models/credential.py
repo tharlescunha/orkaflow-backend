@@ -1,3 +1,5 @@
+# app\models\credential.py
+
 from sqlalchemy import Boolean, ForeignKey, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 

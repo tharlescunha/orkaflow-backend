@@ -11,7 +11,6 @@ class Bot(Base, BaseModelMixin, TimestampMixin):
         UniqueConstraint("repository_id", "name", name="uq_bots_repository_id_name"),
     )
 
-    bot_id: Mapped[str] = mapped_column(String(100), nullable=False, unique=True, index=True)
     name: Mapped[str] = mapped_column(String(150), nullable=False, index=True)
     technology: Mapped[BotTechnology] = mapped_column(
         Enum(BotTechnology, name="bot_technology"),
@@ -37,3 +36,4 @@ class Bot(Base, BaseModelMixin, TimestampMixin):
     repository = relationship("Repository", back_populates="bots")
     versions = relationship("BotVersion", back_populates="bot")
     automations = relationship("Automation", back_populates="bot")
+    

@@ -1,3 +1,5 @@
+# app\models\automation.py
+
 from sqlalchemy import Boolean, Enum, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 

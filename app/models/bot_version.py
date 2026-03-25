@@ -1,4 +1,4 @@
-from sqlalchemy import ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, BaseModelMixin
@@ -16,11 +16,14 @@ class BotVersion(Base, BaseModelMixin, TimestampMixin):
         nullable=False,
         index=True,
     )
+    storage_type: Mapped[str] = mapped_column(String(50), nullable=False)
     version: Mapped[str] = mapped_column(String(50), nullable=False)
     commit_hash: Mapped[str | None] = mapped_column(String(80), nullable=True)
     branch: Mapped[str | None] = mapped_column(String(120), nullable=True)
     artifact_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     changelog: Mapped[str | None] = mapped_column(Text, nullable=True)
+    checksum: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_by: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="NO ACTION"),
         nullable=False,

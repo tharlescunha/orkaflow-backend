@@ -1,5 +1,5 @@
+# app/domain/enums.py
 from enum import Enum
-
 
 class UserRole(str, Enum):
     ADMIN = "admin"
@@ -47,6 +47,7 @@ class TaskStatus(str, Enum):
     READY = "ready"
     RUNNING = "running"
     STOP_REQUESTED = "stop_requested"
+    FORCED_STOP = "forced_stop"
     CANCELED = "canceled"
     FINISHED = "finished"
     ERROR = "error"
@@ -70,6 +71,8 @@ class TaskLogLevel(str, Enum):
 
 
 class TaskLogSource(str, Enum):
+    PANEL = "panel"
+    SYSTEM = "system"
     WORKER = "worker"
     BACKEND = "backend"
     SCHEDULER = "scheduler"
@@ -137,4 +140,3 @@ class CredentialValueType(str, Enum):
     TOKEN = "token"
     JSON = "json"
     SECRET = "secret"
-    

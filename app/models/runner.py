@@ -1,3 +1,5 @@
+# app/models/runner.py
+
 from datetime import datetime
 
 from sqlalchemy import BigInteger, Boolean, DateTime, Enum, String
@@ -6,11 +8,19 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.domain.enums import RunnerStatus
 from app.models.base import Base, BaseModelMixin, TimestampMixin
 
+import uuid
+
 
 class Runner(Base, BaseModelMixin, TimestampMixin):
     __tablename__ = "runners"
 
-    uuid: Mapped[str] = mapped_column(String(100), nullable=False, unique=True, index=True)
+    uuid: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+        unique=True,
+        index=True,
+        default=lambda: str(uuid.uuid4())
+    )
     name: Mapped[str] = mapped_column(String(120), nullable=False, unique=True, index=True)
     label: Mapped[str | None] = mapped_column(String(150), nullable=True)
     host_name: Mapped[str | None] = mapped_column(String(150), nullable=True)

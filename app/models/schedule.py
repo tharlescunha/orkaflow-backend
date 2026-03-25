@@ -1,3 +1,5 @@
+# app\models\schedule.py
+
 from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, Text

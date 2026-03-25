@@ -1,0 +1,5 @@
+Iniciar workers
+python -m app.workers.main
+
+Iniciar projeto
+uvicorn app.main:app --reload

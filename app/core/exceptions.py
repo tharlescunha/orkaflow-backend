@@ -1,45 +1,34 @@
-class OrkaFlowException(Exception):
-    """
-    Exceção base do projeto.
+# app\core\exceptions.py
 
-    Todas as exceções customizadas devem herdar desta classe.
-    """
-
-    def __init__(self, message: str = "Ocorreu um erro na aplicação."):
-        self.message = message
-        super().__init__(self.message)
+from fastapi import HTTPException, status
 
 
-class BusinessRuleException(OrkaFlowException):
-    """
-    Erro de regra de negócio.
-    """
-    pass
+class OrkaFlowException(HTTPException):
+    def __init__(self, status_code: int, detail: str):
+        super().__init__(status_code=status_code, detail=detail)
 
 
 class NotFoundException(OrkaFlowException):
-    """
-    Erro para recurso não encontrado.
-    """
-    pass
+    def __init__(self, detail: str = "Recurso não encontrado."):
+        super().__init__(status.HTTP_404_NOT_FOUND, detail)
 
 
-class UnauthorizedException(OrkaFlowException):
-    """
-    Erro para acesso não autorizado.
-    """
-    pass
+class ConflictException(OrkaFlowException):
+    def __init__(self, detail: str = "Conflito de dados."):
+        super().__init__(status.HTTP_409_CONFLICT, detail)
 
 
 class ValidationException(OrkaFlowException):
-    """
-    Erro para validações de domínio.
-    """
-    pass
+    def __init__(self, detail: str = "Erro de validação."):
+        super().__init__(status.HTTP_400_BAD_REQUEST, detail)
 
 
-class DatabaseException(OrkaFlowException):
-    """
-    Erro relacionado a banco de dados.
-    """
-    pass
+class UnauthorizedException(OrkaFlowException):
+    def __init__(self, detail: str = "Não autenticado."):
+        super().__init__(status.HTTP_401_UNAUTHORIZED, detail)
+
+
+class ForbiddenException(OrkaFlowException):
+    def __init__(self, detail: str = "Acesso negado."):
+        super().__init__(status.HTTP_403_FORBIDDEN, detail)
+        

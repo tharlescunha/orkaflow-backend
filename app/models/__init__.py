@@ -17,6 +17,7 @@ from app.models.task_error import TaskError
 from app.models.task_log import TaskLog
 from app.models.task_parameter import TaskParameter
 from app.models.user import User
+from app.models.audit_log import AuditLog
 
 __all__ = [
     "Base",
@@ -38,4 +39,5 @@ __all__ = [
     "TaskError",
     "Lock",
     "Notification",
+    "AuditLog",
 ]
