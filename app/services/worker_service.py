@@ -20,6 +20,12 @@ from app.repositories.runner_repository import RunnerRepository
 from app.repositories.task_error_repository import TaskErrorRepository
 from app.repositories.task_log_repository import TaskLogRepository
 from app.repositories.task_repository import TaskRepository
+
+from app.repositories.bot_repository import BotRepository
+from app.models.automation import Automation
+from app.models.automation_runner import AutomationRunner
+from app.models.bot_version import BotVersion
+
 from app.schemas.worker import (
     WorkerHeartbeatResponse,
     WorkerSyncRequest,
@@ -79,6 +85,7 @@ class WorkerService:
             "found": False,
             "task_id": None,
             "automation_id": None,
+            "bot_id": None,
             "bot_version_id": None,
             "priority": None,
             "status": None,
@@ -190,7 +197,6 @@ class WorkerService:
     def heartbeat(self, payload) -> WorkerHeartbeatResponse:
         runner = self._authenticate_runner(payload.uuid, payload.token)
 
-        # Ajusta status considerando carga enviada pelo worker
         max_concurrency = self._get_runner_max_concurrency(runner)
 
         if payload.running_tasks >= max_concurrency and max_concurrency > 0:
@@ -241,6 +247,67 @@ class WorkerService:
             else 1
         )
 
+        automation_links = (
+            self.db.query(AutomationRunner)
+            .filter(AutomationRunner.runner_id == runner.id)
+            .all()
+        )
+
+        bot_payloads: list[dict] = []
+        added_bot_ids: set[int] = set()
+
+        for link in automation_links:
+            automation = (
+                self.db.query(Automation)
+                .filter(
+                    Automation.id == link.automation_id,
+                    Automation.active == True,
+                )
+                .first()
+            )
+
+            if not automation:
+                continue
+
+            bot = BotRepository.get_by_id(self.db, automation.bot_id)
+            if not bot or not bot.active:
+                continue
+
+            if bot.id in added_bot_ids:
+                continue
+
+            active_version = (
+                self.db.query(BotVersion)
+                .filter(
+                    BotVersion.bot_id == bot.id,
+                    BotVersion.is_active == True,
+                )
+                .order_by(BotVersion.id.desc())
+                .first()
+            )
+
+            bot_payloads.append(
+                {
+                    "bot_id": bot.id,
+                    "bot_version_id": active_version.id if active_version else None,
+                    "name": bot.name,
+                    "technology": bot.technology.value if hasattr(bot.technology, "value") else str(bot.technology),
+                    "source_type": bot.source_type.value if hasattr(bot.source_type, "value") else str(bot.source_type),
+                    "source_url": bot.source_url,
+                    "repository_url": bot.source_url,
+                    "entrypoint": bot.entrypoint,
+                    "requirements_file": bot.requirements_file,
+                    "timeout_default": bot.timeout_default,
+                    "version": active_version.version if active_version else bot.release_version or bot.current_version,
+                    "commit_hash": active_version.commit_hash if active_version else None,
+                    "branch": active_version.branch if active_version else None,
+                    "storage_type": active_version.storage_type if active_version else None,
+                    "artifact_path": active_version.artifact_path if active_version else None,
+                    "checksum": active_version.checksum if active_version else None,
+                }
+            )
+            added_bot_ids.add(bot.id)
+
         return WorkerSyncResponse(
             runner_id=runner.id,
             status=runner.status.value if hasattr(runner.status, "value") else str(runner.status),
@@ -248,6 +315,7 @@ class WorkerService:
             polling_interval=polling_interval,
             max_concurrency=max_concurrency,
             message="sync successful",
+            bots=bot_payloads,
         )
 
     def get_next_task(self, payload):
@@ -279,10 +347,21 @@ class WorkerService:
 
         parameters = self._resolve_task_parameters(task)
 
+        task_bot_id = None
+        if task.bot_version_id:
+            bot_version = (
+                self.db.query(BotVersion)
+                .filter(BotVersion.id == task.bot_version_id)
+                .first()
+            )
+            if bot_version:
+                task_bot_id = bot_version.bot_id
+
         return {
             "found": True,
             "task_id": task.id,
             "automation_id": task.automation_id,
+            "bot_id": task_bot_id,
             "bot_version_id": task.bot_version_id,
             "priority": task.priority,
             "status": task.status,

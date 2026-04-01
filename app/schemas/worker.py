@@ -74,6 +74,7 @@ class WorkerTaskNextResponse(OrkaBaseSchema):
     found: bool
     task_id: int | None = None
     automation_id: int | None = None
+    bot_id: int | None = None
     bot_version_id: int | None = None
     priority: int | None = None
     status: TaskStatus | None = None
@@ -162,4 +163,5 @@ class WorkerSyncResponse(BaseModel):
     polling_interval: int
     max_concurrency: int
     message: str
+    bots: list[dict] = []
     

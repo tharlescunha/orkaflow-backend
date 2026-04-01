@@ -243,6 +243,14 @@ class SchedulerEngineService:
             )
             return False
 
+        existing_waiting = self._exists_waiting_task_for_automation(schedule.automation_id)
+        if existing_waiting:
+            print(
+                f"[SCHEDULER_ENGINE] waiting_existente "
+                f"automation_id={schedule.automation_id} task_id={existing_waiting.id}"
+            )
+            return False
+
         automation = self.task_repo.get_automation_by_id(schedule.automation_id)
         if not automation or not automation.active:
             schedule.status = ScheduleStatus.ERROR
@@ -290,6 +298,15 @@ class SchedulerEngineService:
             select(Task)
             .where(Task.schedule_id == schedule_id)
             .where(Task.requested_start_at == execution_time_utc)
+            .order_by(Task.id.desc())
+        )
+        return self.db.execute(stmt).scalars().first()
+
+    def _exists_waiting_task_for_automation(self, automation_id: int) -> Task | None:
+        stmt = (
+            select(Task)
+            .where(Task.automation_id == automation_id)
+            .where(Task.status == TaskStatus.WAITING)
             .order_by(Task.id.desc())
         )
         return self.db.execute(stmt).scalars().first()

@@ -106,7 +106,8 @@ class TaskService:
         missing_required = [
             param.name
             for param in automation_parameters
-            if getattr(param, "required", False) and param.name not in provided_parameters
+            if getattr(param, "required", False)
+            and param.name not in provided_parameters
             and getattr(param, "default_value", None) in (None, "")
         ]
         if missing_required:
@@ -119,8 +120,18 @@ class TaskService:
             raise ValidationException("requested_start_at deve possuir timezone.")
 
         timeout_seconds = payload.timeout_seconds or 3600
-
         now = datetime.now(UTC)
+
+        status = TaskStatus.SCHEDULED if requested_start_at else TaskStatus.WAITING
+
+        if status == TaskStatus.WAITING:
+            existing_waiting = self.repository.db.query(self.repository.model).filter(
+                self.repository.model.automation_id == payload.automation_id,
+                self.repository.model.status == TaskStatus.WAITING,
+            ).order_by(self.repository.model.id.desc()).first()
+
+            if existing_waiting:
+                return self.get_task(existing_waiting.id)
 
         task_data = {
             "automation_id": payload.automation_id,
@@ -130,7 +141,7 @@ class TaskService:
             "schedule_id": payload.schedule_id,
             "parent_task_id": payload.parent_task_id,
             "priority": payload.priority,
-            "status": TaskStatus.SCHEDULED if requested_start_at else TaskStatus.WAITING,
+            "status": status,
             "requested_start_at": requested_start_at,
             "timeout_seconds": timeout_seconds,
             "execution_mode": payload.execution_mode or ExecutionMode.MANUAL,
@@ -144,6 +155,8 @@ class TaskService:
         task = self.repository.create(task_data)
 
         final_parameters: list[dict] = []
+
+        automation_param_names = {ap.name for ap in automation_parameters}
 
         for param in automation_parameters:
             if param.name in provided_parameters:
@@ -168,7 +181,7 @@ class TaskService:
 
         extra_parameters = [
             p for p in payload.parameters
-            if p.parameter_name not in {ap.name for ap in automation_parameters}
+            if p.parameter_name not in automation_param_names
         ]
         for extra in extra_parameters:
             final_parameters.append(
