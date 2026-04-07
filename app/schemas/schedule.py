@@ -19,6 +19,15 @@ class ScheduleBase(BaseModel):
     parameters_json: Optional[dict[str, Any] | list[Any]] = None
     timezone: str = Field(default="UTC", max_length=100)
     active: bool = True
+    interval_value: Optional[int] = None
+    interval_unit: Optional[str] = Field(default=None, max_length=30)
+
+    @field_validator("interval_value")
+    @classmethod
+    def validate_interval_value(cls, value: Optional[int]):
+        if value is not None and value <= 0:
+            raise ValueError("interval_value deve ser maior que zero")
+        return value
 
 
 class ScheduleCreate(ScheduleBase):
@@ -40,7 +49,7 @@ class ScheduleUpdate(BaseModel):
     start_at: Optional[datetime] = None
     end_at: Optional[datetime] = None
     interval_value: Optional[int] = None
-    interval_unit: Optional[str] = None
+    interval_unit: Optional[str] = Field(default=None, max_length=30)
     misfire_policy: Optional[str] = None
 
     @field_validator("interval_value")
@@ -58,8 +67,6 @@ class ScheduleResponse(ScheduleBase):
     end_at: Optional[datetime] = None
     last_run_at: Optional[datetime] = None
     next_run_at: Optional[datetime] = None
-    interval_value: Optional[int] = None
-    interval_unit: Optional[str] = None
     misfire_policy: Optional[str] = None
     created_at: datetime
     updated_at: datetime

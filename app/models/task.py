@@ -1,5 +1,3 @@
-# app/models/task.py
-
 from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, Text
@@ -81,3 +79,11 @@ class Task(Base, BaseModelMixin):
     logs = relationship("TaskLog", back_populates="task")
     errors = relationship("TaskError", back_populates="task")
     locks = relationship("Lock", back_populates="task")
+
+    telemetry = relationship(
+        "TaskTelemetry",
+        back_populates="task",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+    

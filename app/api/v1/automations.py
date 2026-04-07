@@ -36,7 +36,7 @@ def list_automations(
 
 @router.get("/{automation_id}", response_model=AutomationResponse)
 def get_automation(automation_id: int, db: Session = Depends(get_db)):
-    return AutomationService.get(db, automation_id)
+    return AutomationService.get_serialized(db, automation_id)
 
 
 @router.post("/", response_model=AutomationResponse, status_code=status.HTTP_201_CREATED)

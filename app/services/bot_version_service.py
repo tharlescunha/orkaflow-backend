@@ -25,10 +25,8 @@ class BotVersionService:
         if not bot:
             raise NotFoundException("Bot não encontrado.")
 
-        if data.get("created_by"):
-            user = self.db.query(User).filter(User.id == data["created_by"]).first()
-            if not user:
-                raise NotFoundException("Usuário criador não encontrado.")
+        if not bot.active:
+            raise ConflictException("Não é permitido criar versão para bot inativo.")
 
         existing = self.repo.get_by_bot_and_version(
             self.db,
@@ -37,6 +35,13 @@ class BotVersionService:
         )
         if existing:
             raise ConflictException("Já existe uma versão com esse número para esse bot.")
+
+        if not data.get("created_by"):
+            data["created_by"] = 1
+
+        user = self.db.query(User).filter(User.id == data["created_by"]).first()
+        if not user:
+            raise NotFoundException("Usuário criador não encontrado.")
 
         return self.repo.create(self.db, data)
 

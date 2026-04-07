@@ -34,6 +34,8 @@ class AutomationUpdate(BaseModel):
 
 class AutomationResponse(AutomationBase):
     id: int
+    bot_name: str | None = None
+    repository_name: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -48,6 +50,11 @@ class AutomationRunnerResponse(BaseModel):
     id: int
     automation_id: int
     runner_id: int
+    runner_name: str | None = None
+    runner_label: str | None = None
+    runner_status: str | None = None
+    runner_enabled: bool | None = None
+    created_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 

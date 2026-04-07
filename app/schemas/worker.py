@@ -149,6 +149,47 @@ class WorkerTaskErrorResponse(OrkaBaseSchema):
     task_id: int
 
 
+class WorkerCredentialResolveRequest(OrkaBaseSchema):
+    uuid: str
+    token: str
+    keys: list[str] | None = None
+
+
+class WorkerCredentialResolveResponse(OrkaBaseSchema):
+    dados_acesso: dict[str, str | None] = {}
+
+
+class WorkerTaskActiveListRequest(OrkaBaseSchema):
+    uuid: str
+    token: str
+
+
+class WorkerTaskActiveItem(OrkaBaseSchema):
+    id: int
+    automation_id: int
+    runner_id: int | None = None
+    status: TaskStatus
+    lock_key: str | None = None
+
+
+class WorkerTaskActiveListResponse(OrkaBaseSchema):
+    items: list[WorkerTaskActiveItem] = []
+    total: int = 0
+
+
+class WorkerTaskReleaseStartupLocksRequest(OrkaBaseSchema):
+    uuid: str
+    token: str
+
+
+class WorkerTaskReleaseStartupLocksResponse(OrkaBaseSchema):
+    message: str
+    runner_id: int
+    tasks_finalized: int = 0
+    task_locks_released: int = 0
+    runner_locks_released: int = 0
+
+
 class WorkerSyncRequest(BaseModel):
     uuid: str
     token: str
@@ -164,4 +205,40 @@ class WorkerSyncResponse(BaseModel):
     max_concurrency: int
     message: str
     bots: list[dict] = []
+    
+
+class WorkerTaskTelemetryCreate(OrkaBaseSchema):
+    uuid: str
+    token: str
+
+    captured_at: datetime
+
+    execution_started_at: datetime | None = None
+    execution_finished_at: datetime | None = None
+    duration_seconds: float | None = None
+
+    cpu_percent_avg: float | None = None
+    cpu_percent_peak: float | None = None
+
+    memory_used_mb_avg: float | None = None
+    memory_used_mb_peak: float | None = None
+    process_memory_mb_peak: float | None = None
+
+    disk_read_mb: float | None = None
+    disk_write_mb: float | None = None
+
+    net_sent_mb: float | None = None
+    net_recv_mb: float | None = None
+
+    exit_code: int | None = None
+
+    telemetry_status: str | None = None
+    message: str | None = None
+
+    payload_json: str | None = None
+
+
+class WorkerTaskTelemetryResponse(OrkaBaseSchema):
+    message: str
+    task_id: int
     

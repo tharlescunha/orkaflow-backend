@@ -6,11 +6,15 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.schemas.task import TaskRead
 from app.schemas.worker import (
+    WorkerTaskActiveListRequest,
+    WorkerTaskActiveListResponse,
     WorkerTaskClaimRequest,
     WorkerTaskClaimResponse,
     WorkerTaskFinishRequest,
     WorkerTaskNextRequest,
     WorkerTaskNextResponse,
+    WorkerTaskReleaseStartupLocksRequest,
+    WorkerTaskReleaseStartupLocksResponse,
     WorkerTaskStatusUpdateRequest,
 )
 from app.services.worker_service import WorkerService
@@ -22,6 +26,21 @@ router = APIRouter(prefix="/worker/tasks", tags=["Worker Tasks"])
 def get_next_task(payload: WorkerTaskNextRequest, db: Session = Depends(get_db)):
     service = WorkerService(db)
     return service.get_next_task(payload)
+
+
+@router.post("/active", response_model=WorkerTaskActiveListResponse)
+def list_active_tasks(payload: WorkerTaskActiveListRequest, db: Session = Depends(get_db)):
+    service = WorkerService(db)
+    return service.list_active_tasks(payload)
+
+
+@router.post("/release-startup-locks", response_model=WorkerTaskReleaseStartupLocksResponse)
+def release_startup_locks(
+    payload: WorkerTaskReleaseStartupLocksRequest,
+    db: Session = Depends(get_db),
+):
+    service = WorkerService(db)
+    return service.release_startup_locks(payload)
 
 
 @router.post("/{task_id}/claim", response_model=WorkerTaskClaimResponse)

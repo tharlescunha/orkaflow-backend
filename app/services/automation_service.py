@@ -8,6 +8,29 @@ from app.repositories.automation_repository import AutomationRepository
 
 class AutomationService:
     @staticmethod
+    def _serialize(automation):
+        return {
+            "id": automation.id,
+            "name": automation.name,
+            "label": automation.label,
+            "description": automation.description,
+            "bot_id": automation.bot_id,
+            "bot_name": automation.bot.name if automation.bot else None,
+            "repository_id": automation.repository_id,
+            "repository_name": automation.repository.name if automation.repository else None,
+            "default_priority": automation.default_priority,
+            "notification_type": (
+                automation.notification_type.value
+                if getattr(automation, "notification_type", None) is not None
+                and hasattr(automation.notification_type, "value")
+                else automation.notification_type
+            ),
+            "active": automation.active,
+            "created_at": automation.created_at,
+            "updated_at": automation.updated_at,
+        }
+
+    @staticmethod
     def list(
         db: Session,
         *,
@@ -15,12 +38,13 @@ class AutomationService:
         repository_id: int | None = None,
         bot_id: int | None = None,
     ):
-        return AutomationRepository.list(
+        automations = AutomationRepository.list(
             db,
             active=active,
             repository_id=repository_id,
             bot_id=bot_id,
         )
+        return [AutomationService._serialize(item) for item in automations]
 
     @staticmethod
     def get(db: Session, automation_id: int):
@@ -28,6 +52,11 @@ class AutomationService:
         if not automation:
             raise NotFoundException("Automação não encontrada")
         return automation
+
+    @staticmethod
+    def get_serialized(db: Session, automation_id: int):
+        automation = AutomationService.get(db, automation_id)
+        return AutomationService._serialize(automation)
 
     @staticmethod
     def create(db: Session, data: dict):
@@ -50,7 +79,9 @@ class AutomationService:
         if existing:
             raise ConflictException("Já existe uma automação com esse nome nesse repositório")
 
-        return AutomationRepository.create(db, data)
+        automation = AutomationRepository.create(db, data)
+        automation = AutomationRepository.get_by_id(db, automation.id)
+        return AutomationService._serialize(automation)
 
     @staticmethod
     def update(db: Session, automation_id: int, data: dict):
@@ -79,15 +110,21 @@ class AutomationService:
         if existing and existing.id != automation.id:
             raise ConflictException("Já existe uma automação com esse nome nesse repositório")
 
-        return AutomationRepository.update(db, automation, data)
+        updated = AutomationRepository.update(db, automation, data)
+        updated = AutomationRepository.get_by_id(db, updated.id)
+        return AutomationService._serialize(updated)
 
     @staticmethod
     def activate(db: Session, automation_id: int):
         automation = AutomationService.get(db, automation_id)
-        return AutomationRepository.update(db, automation, {"active": True})
+        updated = AutomationRepository.update(db, automation, {"active": True})
+        updated = AutomationRepository.get_by_id(db, updated.id)
+        return AutomationService._serialize(updated)
 
     @staticmethod
     def deactivate(db: Session, automation_id: int):
         automation = AutomationService.get(db, automation_id)
-        return AutomationRepository.update(db, automation, {"active": False})
+        updated = AutomationRepository.update(db, automation, {"active": False})
+        updated = AutomationRepository.get_by_id(db, updated.id)
+        return AutomationService._serialize(updated)
     

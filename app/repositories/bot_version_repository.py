@@ -7,7 +7,11 @@ class BotVersionRepository:
 
     @staticmethod
     def get_all(db: Session):
-        return db.query(BotVersion).all()
+        return (
+            db.query(BotVersion)
+            .order_by(BotVersion.created_at.desc(), BotVersion.id.desc())
+            .all()
+        )
 
     @staticmethod
     def get_by_id(db: Session, bot_version_id: int):

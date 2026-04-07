@@ -18,6 +18,8 @@ from app.models.schedule import Schedule
 from app.models.task import Task
 from app.repositories.task_repository import TaskRepository
 
+import json
+
 try:
     from croniter import CroniterBadCronError, croniter
 except ImportError:  # pragma: no cover
@@ -229,6 +231,33 @@ class SchedulerEngineService:
 
         return due_times_utc
 
+    def _build_task_parameters_from_schedule(self, schedule: Schedule) -> list[dict]:
+        payload: list[dict] = []
+
+        if schedule.parameters_json is not None:
+            payload.append(
+                {
+                    "parameter_name": "parameters_json",
+                    "parameter_value": json.dumps(schedule.parameters_json, ensure_ascii=False),
+                    "is_secret": False,
+                    "resolved_from_credential_item_id": None,
+                }
+            )
+            return payload
+
+        parameters = self.task_repo.get_automation_parameters(schedule.automation_id)
+        for param in parameters:
+            payload.append(
+                {
+                    "parameter_name": param.name,
+                    "parameter_value": param.default_value,
+                    "is_secret": False,
+                    "resolved_from_credential_item_id": None,
+                }
+            )
+
+        return payload
+    
     def _create_task(
         self,
         schedule: Schedule,
@@ -257,6 +286,11 @@ class SchedulerEngineService:
             self.db.add(schedule)
             return False
 
+        bot = automation.bot
+        if not bot or not bot.active:
+            print(f"[SCHEDULER_ENGINE] bot_inativo automation_id={automation.id}")
+            return False
+
         bot_version = self.task_repo.get_latest_bot_version_for_bot(automation.bot_id)
         if not bot_version:
             schedule.status = ScheduleStatus.ERROR
@@ -277,18 +311,8 @@ class SchedulerEngineService:
             }
         )
 
-        parameters = self.task_repo.get_automation_parameters(schedule.automation_id)
-        if parameters:
-            payload = []
-            for param in parameters:
-                payload.append(
-                    {
-                        "parameter_name": param.name,
-                        "parameter_value": param.default_value,
-                        "is_secret": False,
-                        "resolved_from_credential_item_id": None,
-                    }
-                )
+        payload = self._build_task_parameters_from_schedule(schedule)
+        if payload:
             self.task_repo.create_parameters_bulk(task.id, payload)
 
         return True
@@ -432,4 +456,4 @@ class SchedulerEngineService:
         day = min(dt.day, last_day_of_target_month)
 
         return dt.replace(year=year, month=month, day=day)
-    
+        

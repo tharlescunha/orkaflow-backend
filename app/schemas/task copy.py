@@ -1,3 +1,5 @@
+# app/schemas/task.py
+
 from datetime import datetime
 from typing import Any
 
@@ -21,71 +23,6 @@ class TaskParameterCreate(TaskParameterBase):
 class TaskParameterRead(TaskParameterBase):
     id: int
     task_id: int
-
-
-class TaskTelemetryRead(OrkaBaseSchema):
-    id: int
-    task_id: int
-    runner_id: int | None = None
-    captured_at: datetime
-    execution_started_at: datetime | None = None
-    execution_finished_at: datetime | None = None
-    duration_seconds: float | None = None
-    cpu_percent_avg: float | None = None
-    cpu_percent_peak: float | None = None
-    memory_used_mb_avg: float | None = None
-    memory_used_mb_peak: float | None = None
-    process_memory_mb_peak: float | None = None
-    disk_read_mb: float | None = None
-    disk_write_mb: float | None = None
-    net_sent_mb: float | None = None
-    net_recv_mb: float | None = None
-    exit_code: int | None = None
-    telemetry_status: str | None = None
-    message: str | None = None
-    payload_json: str | None = None
-    created_at: datetime
-
-
-class TaskRunnerConfigRead(OrkaBaseSchema):
-    id: int
-    runner_id: int
-    max_concurrency: int
-    allowed_parallel_bots: dict | list | None = None
-    polling_interval: int
-    auto_update_bots: bool
-    install_all_bots_on_register: bool
-    maintenance_mode: bool
-    created_at: datetime
-    updated_at: datetime | None = None
-
-
-class TaskRunnerRead(OrkaBaseSchema):
-    id: int
-    uuid: str
-    name: str
-    label: str | None = None
-    host_name: str | None = None
-    ip: str | None = None
-    os_name: str | None = None
-    os_version: str | None = None
-    cpu_arch: str | None = None
-    memory_total: int | None = None
-    access_remote: bool
-    enabled: bool
-    status: str
-    last_heartbeat: datetime | None = None
-    created_at: datetime
-    updated_at: datetime | None = None
-    config: TaskRunnerConfigRead | None = None
-
-
-class TaskRunnerUsageRead(OrkaBaseSchema):
-    period_start: datetime | None = None
-    period_end: datetime | None = None
-    available_seconds: int = 0
-    execution_seconds: int = 0
-    usage_percent: float = 0.0
 
 
 class TaskBase(OrkaBaseSchema):
@@ -165,10 +102,6 @@ class TaskRead(OrkaBaseSchema):
     updated_at: datetime | None = None
     parameters: list[TaskParameterRead] = []
 
-    telemetry: TaskTelemetryRead | None = None
-    runner_details: TaskRunnerRead | None = None
-    runner_usage: TaskRunnerUsageRead | None = None
-
 
 class TaskListItem(OrkaBaseSchema):
     id: int
@@ -203,6 +136,7 @@ class TaskListItem(OrkaBaseSchema):
     queue_name: str | None = None
 
     final_message: str | None = None
+
     execution_duration_seconds: int | None = None
 
 
@@ -226,3 +160,4 @@ class TaskFilters(OrkaBaseSchema):
 class TaskManualCreateResponse(OrkaBaseSchema):
     message: str
     task: TaskRead
+    

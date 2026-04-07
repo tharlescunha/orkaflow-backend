@@ -76,6 +76,11 @@ class RunnerRead(RunnerBase):
     updated_at: datetime | None = None
     config: RunnerConfigRead | None = None
 
+    # NOVOS CAMPOS
+    running_tasks_count: int = 0
+    has_running_task: bool = False
+    linked_bots_count: int = 0
+
 
 class RunnerListItem(OrkaBaseSchema):
     id: int
@@ -87,4 +92,3 @@ class RunnerListItem(OrkaBaseSchema):
     host_name: str | None = None
     ip: str | None = None
     last_heartbeat: datetime | None = None
-    

@@ -20,6 +20,7 @@ from app.repositories.runner_repository import RunnerRepository
 from app.repositories.task_error_repository import TaskErrorRepository
 from app.repositories.task_log_repository import TaskLogRepository
 from app.repositories.task_repository import TaskRepository
+from app.repositories.task_telemetry_repository import TaskTelemetryRepository
 
 from app.repositories.bot_repository import BotRepository
 from app.models.automation import Automation
@@ -32,6 +33,8 @@ from app.schemas.worker import (
     WorkerSyncResponse,
     WorkerTaskErrorResponse,
     WorkerTaskLogResponse,
+    WorkerTaskActiveListResponse,
+    WorkerTaskReleaseStartupLocksResponse,
 )
 from app.services.lock_service import LockService
 
@@ -49,6 +52,12 @@ RUNNER_PROGRESS_STATUSES = {
     TaskStatus.STOP_REQUESTED,
 }
 
+RUNNER_STARTUP_ACTIVE_STATUSES = {
+    TaskStatus.READY,
+    TaskStatus.RUNNING,
+    TaskStatus.STOP_REQUESTED,
+}
+
 
 class WorkerService:
     def __init__(self, db: Session):
@@ -58,6 +67,7 @@ class WorkerService:
         self.credential_repository = CredentialRepository(db)
         self.task_log_repository = TaskLogRepository(db)
         self.task_error_repository = TaskErrorRepository(db)
+        self.task_telemetry_repository = TaskTelemetryRepository(db)  # 👈 AQUI
         self.lock_service = LockService(db)
 
     def _authenticate_runner(self, uuid: str, token: str):
@@ -114,7 +124,7 @@ class WorkerService:
                     param.resolved_from_credential_item_id
                 )
 
-                if credential_item and credential_item.active:
+                if credential_item:
                     value = decrypt_credential_value(credential_item.encrypted_value)
 
             parameters.append(
@@ -316,6 +326,72 @@ class WorkerService:
             max_concurrency=max_concurrency,
             message="sync successful",
             bots=bot_payloads,
+        )
+
+    def list_active_tasks(self, payload) -> WorkerTaskActiveListResponse:
+        runner = self._authenticate_runner(payload.uuid, payload.token)
+        tasks = self.task_repository.list_active_for_runner(runner.id)
+
+        items: list[dict] = []
+        for task in tasks:
+            items.append(
+                {
+                    "id": task.id,
+                    "automation_id": task.automation_id,
+                    "runner_id": task.runner_id,
+                    "status": task.status,
+                    "lock_key": self.lock_service.build_task_lock_key(task),
+                }
+            )
+
+        return WorkerTaskActiveListResponse(
+            items=items,
+            total=len(items),
+        )
+
+    def release_startup_locks(self, payload) -> WorkerTaskReleaseStartupLocksResponse:
+        runner = self._authenticate_runner(payload.uuid, payload.token)
+        tasks = self.task_repository.list_active_for_runner(runner.id)
+
+        tasks_finalized = 0
+        task_locks_released = 0
+
+        now = datetime.now(UTC)
+
+        for task in tasks:
+            if task.status not in RUNNER_STARTUP_ACTIVE_STATUSES:
+                continue
+
+            final_message = (
+                "Task finalizada automaticamente na inicialização do worker, "
+                "pois havia sido deixada em execução sem processo local ativo."
+            )
+
+            self.task_repository.update(
+                task,
+                {
+                    "status": TaskStatus.CANCELED,
+                    "finished_at": now,
+                    "last_update_at": now,
+                    "final_message": final_message,
+                    "stop_requested": False,
+                },
+            )
+            tasks_finalized += 1
+
+            released = self.lock_service.release_task_locks(task.id)
+            task_locks_released += len(released)
+
+        runner_locks_released = len(self.lock_service.release_runner_locks(runner.id))
+
+        self.db.commit()
+
+        return WorkerTaskReleaseStartupLocksResponse(
+            message="Recuperação inicial do worker concluída com sucesso.",
+            runner_id=runner.id,
+            tasks_finalized=tasks_finalized,
+            task_locks_released=task_locks_released,
+            runner_locks_released=runner_locks_released,
         )
 
     def get_next_task(self, payload):
@@ -541,4 +617,78 @@ class WorkerService:
             message="Erro registrado com sucesso.",
             task_id=task.id,
         )
-    
+
+    def resolve_credential_for_runner(self, credential_id: int, payload):
+        self._authenticate_runner(payload.uuid, payload.token)
+
+        credential = self.credential_repository.get_by_id(credential_id)
+        if not credential:
+            raise NotFoundException("Credencial não encontrada.")
+
+        if not credential.active:
+            raise ValidationException("Credencial está inativa.")
+
+        requested_keys = None
+        if payload.keys:
+            requested_keys = {str(key) for key in payload.keys if key is not None}
+
+        resolved_items: dict[str, str | None] = {}
+
+        for item in credential.items:
+            key_name = item.key_name
+
+            if requested_keys is not None and key_name not in requested_keys:
+                continue
+
+            resolved_items[key_name] = decrypt_credential_value(item.encrypted_value)
+
+        return {
+            "dados_acesso": resolved_items,
+        }
+
+    def create_task_telemetry(self, task_id: int, payload):
+        runner = self._authenticate_runner(payload.uuid, payload.token)
+        task = self.task_repository.get_by_id(task_id)
+
+        self._validate_task_runner_ownership(task, runner)
+
+        existing = self.task_telemetry_repository.get_by_task_id(task.id)
+
+        data = {
+            "task_id": task.id,
+            "runner_id": runner.id,
+            "captured_at": payload.captured_at,
+            "execution_started_at": payload.execution_started_at,
+            "execution_finished_at": payload.execution_finished_at,
+            "duration_seconds": payload.duration_seconds,
+            "cpu_percent_avg": payload.cpu_percent_avg,
+            "cpu_percent_peak": payload.cpu_percent_peak,
+            "memory_used_mb_avg": payload.memory_used_mb_avg,
+            "memory_used_mb_peak": payload.memory_used_mb_peak,
+            "process_memory_mb_peak": payload.process_memory_mb_peak,
+            "disk_read_mb": payload.disk_read_mb,
+            "disk_write_mb": payload.disk_write_mb,
+            "net_sent_mb": payload.net_sent_mb,
+            "net_recv_mb": payload.net_recv_mb,
+            "exit_code": payload.exit_code,
+            "telemetry_status": payload.telemetry_status,
+            "message": payload.message,
+            "payload_json": payload.payload_json,
+            "created_at": datetime.now(UTC),
+        }
+
+        if existing:
+            self.task_telemetry_repository.update(existing, data)
+        else:
+            self.task_telemetry_repository.create(data)
+
+        # atualiza atividade da task (igual logs/errors)
+        task.last_update_at = datetime.now(UTC)
+        self.db.add(task)
+
+        self.db.commit()
+
+        return {
+            "message": "Telemetria registrada com sucesso.",
+            "task_id": task.id,
+        }

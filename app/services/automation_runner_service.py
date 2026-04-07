@@ -8,9 +8,29 @@ from app.services.automation_service import AutomationService
 
 class AutomationRunnerService:
     @staticmethod
+    def _serialize(link):
+        runner = getattr(link, "runner", None)
+
+        status = None
+        if runner is not None:
+            status = runner.status.value if hasattr(runner.status, "value") else runner.status
+
+        return {
+            "id": link.id,
+            "automation_id": link.automation_id,
+            "runner_id": link.runner_id,
+            "runner_name": runner.name if runner else None,
+            "runner_label": runner.label if runner else None,
+            "runner_status": status,
+            "runner_enabled": runner.enabled if runner else None,
+            "created_at": getattr(link, "created_at", None),
+        }
+
+    @staticmethod
     def list_by_automation(db: Session, automation_id: int):
         AutomationService.get(db, automation_id)
-        return AutomationRunnerRepository.list_by_automation(db, automation_id)
+        links = AutomationRunnerRepository.list_by_automation(db, automation_id)
+        return [AutomationRunnerService._serialize(link) for link in links]
 
     @staticmethod
     def link_runner(db: Session, automation_id: int, runner_id: int):
@@ -26,13 +46,15 @@ class AutomationRunnerService:
         if existing:
             raise ConflictException("Esse runner já está vinculado à automação")
 
-        return AutomationRunnerRepository.create(
+        link = AutomationRunnerRepository.create(
             db,
             {
                 "automation_id": automation_id,
                 "runner_id": runner_id,
             },
         )
+        link = AutomationRunnerRepository.get_by_id(db, link.id)
+        return AutomationRunnerService._serialize(link)
 
     @staticmethod
     def unlink_runner(db: Session, automation_id: int, link_id: int):

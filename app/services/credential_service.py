@@ -46,9 +46,9 @@ class CredentialService:
         if not repository:
             raise NotFoundException("Repositório não encontrado.")
 
-        existing = self.repo.get_by_name(data.name)
+        existing = self.repo.get_by_label(data.label)
         if existing:
-            raise ConflictException("Já existe uma credencial com esse nome.")
+            raise ConflictException("Já existe uma credencial com esse label.")
 
         return self.repo.create(**data.model_dump())
 
@@ -61,10 +61,10 @@ class CredentialService:
             if not repository:
                 raise NotFoundException("Repositório não encontrado.")
 
-        if "name" in update_data and update_data["name"] != credential.name:
-            existing = self.repo.get_by_name(update_data["name"])
+        if "label" in update_data and update_data["label"] != credential.label:
+            existing = self.repo.get_by_label(update_data["label"])
             if existing:
-                raise ConflictException("Já existe uma credencial com esse nome.")
+                raise ConflictException("Já existe uma credencial com esse label.")
 
         return self.repo.update(credential, **update_data)
 
@@ -74,7 +74,8 @@ class CredentialService:
 
     def list_items(self, credential_id: int, active: bool | None = None):
         self.get(credential_id)
-        return self.repo.list_items(credential_id, active=active)
+        items = self.repo.list_items(credential_id)
+        return items
 
     def get_item(self, credential_id: int, item_id: int):
         self.get(credential_id)
@@ -93,10 +94,13 @@ class CredentialService:
         encrypted_value = encrypt_credential_value(data.value)
         masked_preview = build_masked_preview(data.value)
 
-        payload = data.model_dump(exclude={"value"})
-        payload["credential_id"] = credential_id
-        payload["encrypted_value"] = encrypted_value
-        payload["masked_preview"] = masked_preview
+        payload = {
+            "credential_id": credential_id,
+            "key_name": data.key,
+            "encrypted_value": encrypted_value,
+            "value_type": data.value_type,
+            "masked_preview": masked_preview,
+        }
 
         return self.repo.create_item(**payload)
 
@@ -104,22 +108,31 @@ class CredentialService:
         item = self.get_item(credential_id, item_id)
         update_data = data.model_dump(exclude_unset=True)
 
-        if "key" in update_data and update_data["key"] != item.key:
+        if "key" in update_data and update_data["key"] != item.key_name:
             existing = self.repo.get_item_by_key(credential_id, update_data["key"])
             if existing:
                 raise ConflictException("Já existe um item com essa chave nesta credencial.")
 
-        if "value" in update_data:
-            raw_value = update_data.pop("value")
-            if raw_value is not None:
-                update_data["encrypted_value"] = encrypt_credential_value(raw_value)
-                update_data["masked_preview"] = build_masked_preview(raw_value)
+        payload = {}
 
-        return self.repo.update_item(item, **update_data)
+        if "key" in update_data:
+            payload["key_name"] = update_data["key"]
+
+        if "value_type" in update_data:
+            payload["value_type"] = update_data["value_type"]
+
+        if "value" in update_data:
+            raw_value = update_data["value"]
+            if raw_value is not None:
+                payload["encrypted_value"] = encrypt_credential_value(raw_value)
+                payload["masked_preview"] = build_masked_preview(raw_value)
+
+        return self.repo.update_item(item, **payload)
 
     def delete_item(self, credential_id: int, item_id: int):
         item = self.get_item(credential_id, item_id)
-        return self.repo.soft_delete_item(item)
+        self.repo.delete_item(item)
+        return item
 
     def reveal_item_secret(self, credential_id: int, item_id: int):
         item = self.get_item(credential_id, item_id)
@@ -127,9 +140,8 @@ class CredentialService:
         return {
             "id": item.id,
             "credential_id": item.credential_id,
-            "key": item.key,
+            "key": item.key_name,
             "value_type": item.value_type,
             "value": decrypt_credential_value(item.encrypted_value),
-            "active": item.active,
         }
     

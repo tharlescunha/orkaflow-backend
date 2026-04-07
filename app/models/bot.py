@@ -12,21 +12,27 @@ class Bot(Base, BaseModelMixin, TimestampMixin):
     )
 
     name: Mapped[str] = mapped_column(String(150), nullable=False, index=True)
+    description: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
     technology: Mapped[BotTechnology] = mapped_column(
         Enum(BotTechnology, name="bot_technology"),
         nullable=False,
     )
+
     repository_id: Mapped[int] = mapped_column(
         ForeignKey("repositories.id", ondelete="NO ACTION"),
         nullable=False,
         index=True,
     )
+
     current_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
     release_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
+
     source_type: Mapped[BotSourceType] = mapped_column(
         Enum(BotSourceType, name="bot_source_type"),
         nullable=False,
     )
+
     source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     entrypoint: Mapped[str] = mapped_column(String(255), nullable=False)
     requirements_file: Mapped[str | None] = mapped_column(String(255), nullable=True)

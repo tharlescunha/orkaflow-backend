@@ -1,4 +1,4 @@
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.models.automation_runner import AutomationRunner
 
@@ -8,6 +8,7 @@ class AutomationRunnerRepository:
     def list_by_automation(db: Session, automation_id: int):
         return (
             db.query(AutomationRunner)
+            .options(joinedload(AutomationRunner.runner))
             .filter(AutomationRunner.automation_id == automation_id)
             .order_by(AutomationRunner.id.asc())
             .all()
@@ -15,7 +16,12 @@ class AutomationRunnerRepository:
 
     @staticmethod
     def get_by_id(db: Session, link_id: int):
-        return db.query(AutomationRunner).filter(AutomationRunner.id == link_id).first()
+        return (
+            db.query(AutomationRunner)
+            .options(joinedload(AutomationRunner.runner))
+            .filter(AutomationRunner.id == link_id)
+            .first()
+        )
 
     @staticmethod
     def get_by_automation_and_runner(db: Session, automation_id: int, runner_id: int):

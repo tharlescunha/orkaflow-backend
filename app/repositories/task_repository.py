@@ -9,6 +9,7 @@ from app.models.automation import Automation
 from app.models.automation_parameter import AutomationParameter
 from app.models.automation_runner import AutomationRunner
 from app.models.bot_version import BotVersion
+from app.models.runner import Runner
 from app.models.task import Task
 from app.models.task_parameter import TaskParameter
 
@@ -17,21 +18,33 @@ class TaskRepository:
     def __init__(self, db: Session):
         self.db = db
 
-    def _base_query(self) -> Select[tuple[Task]]:
+    def _detail_query(self) -> Select[tuple[Task]]:
         return (
             select(Task)
             .options(
                 selectinload(Task.parameters),
                 selectinload(Task.automation),
-                selectinload(Task.runner),
+                selectinload(Task.runner).selectinload(Runner.config),
                 selectinload(Task.bot_version),
                 selectinload(Task.created_by_user),
                 selectinload(Task.schedule),
+                selectinload(Task.telemetry),
+            )
+        )
+
+    def _list_query(self) -> Select[tuple[Task]]:
+        return (
+            select(Task)
+            .options(
+                selectinload(Task.automation),
+                selectinload(Task.runner),
+                selectinload(Task.bot_version),
+                selectinload(Task.created_by_user),
             )
         )
 
     def get_by_id(self, task_id: int) -> Task | None:
-        stmt = self._base_query().where(Task.id == task_id)
+        stmt = self._detail_query().where(Task.id == task_id)
         return self.db.execute(stmt).scalar_one_or_none()
 
     def list_all(
@@ -44,7 +57,7 @@ class TaskRepository:
         runner_id: int | None = None,
         created_by: int | None = None,
     ) -> tuple[Sequence[Task], int]:
-        stmt = self._base_query()
+        stmt = self._list_query()
         count_stmt = select(func.count(Task.id))
 
         if status is not None:
@@ -152,11 +165,26 @@ class TaskRepository:
         )
         return int(self.db.execute(stmt).scalar_one())
 
+    def list_active_for_runner(self, runner_id: int) -> Sequence[Task]:
+        active_statuses = (
+            TaskStatus.READY,
+            TaskStatus.RUNNING,
+            TaskStatus.STOP_REQUESTED,
+        )
+
+        stmt = (
+            self._detail_query()
+            .where(Task.runner_id == runner_id)
+            .where(Task.status.in_(active_statuses))
+            .order_by(Task.id.asc())
+        )
+        return self.db.execute(stmt).scalars().all()
+
     def list_waiting_candidates_for_runner(self, runner_id: int) -> Sequence[Task]:
         now = datetime.now(UTC)
 
         stmt = (
-            self._base_query()
+            self._detail_query()
             .where(Task.status == TaskStatus.WAITING)
             .where((Task.runner_id.is_(None)) | (Task.runner_id == runner_id))
             .where((Task.requested_start_at.is_(None)) | (Task.requested_start_at <= now))

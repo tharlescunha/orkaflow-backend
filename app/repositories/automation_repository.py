@@ -1,4 +1,4 @@
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.models.automation import Automation
 
@@ -12,7 +12,13 @@ class AutomationRepository:
         repository_id: int | None = None,
         bot_id: int | None = None,
     ):
-        query = db.query(Automation)
+        query = (
+            db.query(Automation)
+            .options(
+                joinedload(Automation.bot),
+                joinedload(Automation.repository),
+            )
+        )
 
         if active is not None:
             query = query.filter(Automation.active == active)
@@ -27,7 +33,15 @@ class AutomationRepository:
 
     @staticmethod
     def get_by_id(db: Session, automation_id: int):
-        return db.query(Automation).filter(Automation.id == automation_id).first()
+        return (
+            db.query(Automation)
+            .options(
+                joinedload(Automation.bot),
+                joinedload(Automation.repository),
+            )
+            .filter(Automation.id == automation_id)
+            .first()
+        )
 
     @staticmethod
     def get_by_repository_and_name(db: Session, repository_id: int, name: str):

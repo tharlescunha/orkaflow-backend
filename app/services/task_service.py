@@ -1,14 +1,12 @@
-# app/services/task_service.py
-
 from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import NotFoundException, ValidationException
 from app.domain.enums import ExecutionMode, TaskStatus
+from app.repositories.runner_repository import RunnerRepository
 from app.repositories.task_repository import TaskRepository
 from app.schemas.task import TaskCreate, TaskStatusUpdate, TaskUpdate
-
 
 FINAL_STATUSES = {
     TaskStatus.FINISHED,
@@ -37,10 +35,162 @@ CANCEL_ALLOWED_STATUSES = {
 }
 
 
+def _calculate_execution_duration_seconds(task) -> int | None:
+    if task.started_at and task.finished_at:
+        return int((task.finished_at - task.started_at).total_seconds())
+
+    if task.started_at and task.status == TaskStatus.RUNNING:
+        now = datetime.now(UTC)
+        return int((now - task.started_at).total_seconds())
+
+    return None
+
+
 class TaskService:
     def __init__(self, db: Session):
         self.db = db
         self.repository = TaskRepository(db)
+        self.runner_repository = RunnerRepository(db)
+
+    def _build_telemetry_payload(self, task):
+        if not task.telemetry:
+            return None
+
+        telemetry = task.telemetry
+        return {
+            "id": telemetry.id,
+            "task_id": telemetry.task_id,
+            "runner_id": telemetry.runner_id,
+            "captured_at": telemetry.captured_at,
+            "execution_started_at": telemetry.execution_started_at,
+            "execution_finished_at": telemetry.execution_finished_at,
+            "duration_seconds": telemetry.duration_seconds,
+            "cpu_percent_avg": telemetry.cpu_percent_avg,
+            "cpu_percent_peak": telemetry.cpu_percent_peak,
+            "memory_used_mb_avg": telemetry.memory_used_mb_avg,
+            "memory_used_mb_peak": telemetry.memory_used_mb_peak,
+            "process_memory_mb_peak": telemetry.process_memory_mb_peak,
+            "disk_read_mb": telemetry.disk_read_mb,
+            "disk_write_mb": telemetry.disk_write_mb,
+            "net_sent_mb": telemetry.net_sent_mb,
+            "net_recv_mb": telemetry.net_recv_mb,
+            "exit_code": telemetry.exit_code,
+            "telemetry_status": telemetry.telemetry_status,
+            "message": telemetry.message,
+            "payload_json": telemetry.payload_json,
+            "created_at": telemetry.created_at,
+        }
+
+    def _build_runner_details_payload(self, task):
+        runner = task.runner
+        if not runner:
+            return None
+
+        config_payload = None
+        if runner.config:
+            config_payload = {
+                "id": runner.config.id,
+                "runner_id": runner.config.runner_id,
+                "max_concurrency": runner.config.max_concurrency,
+                "allowed_parallel_bots": runner.config.allowed_parallel_bots,
+                "polling_interval": runner.config.polling_interval,
+                "auto_update_bots": runner.config.auto_update_bots,
+                "install_all_bots_on_register": runner.config.install_all_bots_on_register,
+                "maintenance_mode": runner.config.maintenance_mode,
+                "created_at": runner.config.created_at,
+                "updated_at": runner.config.updated_at,
+            }
+
+        return {
+            "id": runner.id,
+            "uuid": runner.uuid,
+            "name": runner.name,
+            "label": runner.label,
+            "host_name": runner.host_name,
+            "ip": runner.ip,
+            "os_name": runner.os_name,
+            "os_version": runner.os_version,
+            "cpu_arch": runner.cpu_arch,
+            "memory_total": runner.memory_total,
+            "access_remote": runner.access_remote,
+            "enabled": runner.enabled,
+            "status": runner.status.value if hasattr(runner.status, "value") else str(runner.status),
+            "last_heartbeat": runner.last_heartbeat,
+            "created_at": runner.created_at,
+            "updated_at": runner.updated_at,
+            "config": config_payload,
+        }
+
+    def _build_runner_usage_payload(self, task):
+        runner = task.runner
+        if not runner:
+            return None
+
+        period_start = runner.created_at
+        period_end = task.finished_at or datetime.now(UTC)
+
+        if not period_start or not period_end or period_end <= period_start:
+            return {
+                "period_start": period_start,
+                "period_end": period_end,
+                "available_seconds": 0,
+                "execution_seconds": 0,
+                "usage_percent": 0.0,
+            }
+
+        available_seconds = int((period_end - period_start).total_seconds())
+        execution_seconds = self.runner_repository.get_total_execution_seconds(
+            runner_id=runner.id,
+            date_from=period_start,
+            date_to=period_end,
+        )
+
+        usage_percent = 0.0
+        if available_seconds > 0:
+            usage_percent = round((execution_seconds / available_seconds) * 100, 2)
+
+        return {
+            "period_start": period_start,
+            "period_end": period_end,
+            "available_seconds": available_seconds,
+            "execution_seconds": execution_seconds,
+            "usage_percent": usage_percent,
+        }
+
+    def _serialize_task_read(self, task):
+        return {
+            "id": task.id,
+            "automation_id": task.automation_id,
+            "bot_version_id": task.bot_version_id,
+            "runner_id": task.runner_id,
+            "created_by": task.created_by,
+            "schedule_id": task.schedule_id,
+            "parent_task_id": task.parent_task_id,
+            "priority": task.priority,
+            "status": task.status,
+            "requested_start_at": task.requested_start_at,
+            "started_at": task.started_at,
+            "finished_at": task.finished_at,
+            "last_update_at": task.last_update_at,
+            "final_message": task.final_message,
+            "items_processed": task.items_processed,
+            "items_failed": task.items_failed,
+            "timeout_seconds": task.timeout_seconds,
+            "retry_count": task.retry_count,
+            "execution_mode": task.execution_mode,
+            "dispatch_attempts": task.dispatch_attempts,
+            "stop_requested": task.stop_requested,
+            "correlation_id": task.correlation_id,
+            "queue_name": task.queue_name,
+            "inactivity_timeout_seconds": task.inactivity_timeout_seconds,
+            "runner_claimed_at": task.runner_claimed_at,
+            "created_at": task.created_at,
+            "updated_at": getattr(task, "updated_at", None),
+            "parameters": list(task.parameters or []),
+            "telemetry": self._build_telemetry_payload(task),
+            "runner_details": self._build_runner_details_payload(task),
+            "runner_usage": self._build_runner_usage_payload(task),
+        }
 
     def list_tasks(
         self,
@@ -52,7 +202,7 @@ class TaskService:
         runner_id: int | None = None,
         created_by: int | None = None,
     ):
-        return self.repository.list_all(
+        items, total = self.repository.list_all(
             skip=skip,
             limit=limit,
             status=status,
@@ -61,11 +211,45 @@ class TaskService:
             created_by=created_by,
         )
 
+        result = []
+        for task in items:
+            result.append(
+                {
+                    "id": task.id,
+                    "automation_id": task.automation_id,
+                    "automation_name": task.automation.name if task.automation else None,
+                    "bot_version_id": task.bot_version_id,
+                    "bot_version_label": getattr(task.bot_version, "version", None),
+                    "runner_id": task.runner_id,
+                    "runner_name": task.runner.name if task.runner else None,
+                    "created_by": task.created_by,
+                    "created_by_name": task.created_by_user.name if task.created_by_user else None,
+                    "schedule_id": task.schedule_id,
+                    "priority": task.priority,
+                    "status": task.status,
+                    "requested_start_at": task.requested_start_at,
+                    "started_at": task.started_at,
+                    "finished_at": task.finished_at,
+                    "last_update_at": task.last_update_at,
+                    "created_at": task.created_at,
+                    "items_processed": task.items_processed,
+                    "items_failed": task.items_failed,
+                    "execution_mode": task.execution_mode,
+                    "stop_requested": task.stop_requested,
+                    "correlation_id": task.correlation_id,
+                    "queue_name": task.queue_name,
+                    "execution_duration_seconds": _calculate_execution_duration_seconds(task),
+                    "final_message": task.final_message,
+                }
+            )
+
+        return result, total
+
     def get_task(self, task_id: int):
         task = self.repository.get_by_id(task_id)
         if not task:
             raise NotFoundException("Task não encontrada.")
-        return task
+        return self._serialize_task_read(task)
 
     def get_task_parameters(self, task_id: int):
         task = self.repository.get_by_id(task_id)
@@ -124,15 +308,6 @@ class TaskService:
 
         status = TaskStatus.SCHEDULED if requested_start_at else TaskStatus.WAITING
 
-        if status == TaskStatus.WAITING:
-            existing_waiting = self.repository.db.query(self.repository.model).filter(
-                self.repository.model.automation_id == payload.automation_id,
-                self.repository.model.status == TaskStatus.WAITING,
-            ).order_by(self.repository.model.id.desc()).first()
-
-            if existing_waiting:
-                return self.get_task(existing_waiting.id)
-
         task_data = {
             "automation_id": payload.automation_id,
             "bot_version_id": bot_version_id,
@@ -155,7 +330,6 @@ class TaskService:
         task = self.repository.create(task_data)
 
         final_parameters: list[dict] = []
-
         automation_param_names = {ap.name for ap in automation_parameters}
 
         for param in automation_parameters:

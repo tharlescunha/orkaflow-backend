@@ -8,6 +8,7 @@ from app.schemas.bot_version import (
     BotVersionUpdate,
 )
 from app.services.bot_version_service import BotVersionService
+from app.api.deps import get_current_user
 
 router = APIRouter(prefix="/bot-versions", tags=["Bot Versions"])
 
@@ -25,9 +26,17 @@ def get_bot_version(bot_version_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/", response_model=BotVersionResponse)
-def create_bot_version(payload: BotVersionCreate, db: Session = Depends(get_db)):
+def create_bot_version(
+    payload: BotVersionCreate,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user),
+):
     service = BotVersionService(db)
-    return service.create(payload.model_dump())
+    data = payload.model_dump()
+
+    data["created_by"] = current_user.id
+
+    return service.create(data)
 
 
 @router.put("/{bot_version_id}", response_model=BotVersionResponse)

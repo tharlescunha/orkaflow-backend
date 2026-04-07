@@ -53,6 +53,10 @@ class LockService:
         now = datetime.now(UTC)
         return self.repository.release_by_task_id(task_id, now)
 
+    def release_runner_locks(self, runner_id: int):
+        now = datetime.now(UTC)
+        return self.repository.release_by_runner_id(runner_id, now)
+
     def cleanup_expired_locks(self):
         now = datetime.now(UTC)
         expired = self.repository.list_active_expired(now)
