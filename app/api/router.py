@@ -30,12 +30,16 @@ from app.api.v1.worker_credentials import router as worker_credentials_router
 
 from app.api.v1.worker_telemetry import router as worker_telemetry_router
 
+from app.api.v1.public_downloads import router as public_downloads_router
+from app.api.v1.worker_parameters import router as worker_parameters_router
+
 
 api_router = APIRouter()
 
 public_router = APIRouter()
 public_router.include_router(health_router)
 public_router.include_router(auth_router)
+public_router.include_router(public_downloads_router)
 
 protected_router = APIRouter(
     dependencies=[Depends(get_current_user)]
@@ -62,6 +66,7 @@ worker_router.include_router(worker_errors_router)
 worker_router.include_router(worker_sync_router)
 worker_router.include_router(worker_credentials_router)
 worker_router.include_router(worker_telemetry_router)
+worker_router.include_router(worker_parameters_router)
 
 api_router.include_router(public_router)
 api_router.include_router(protected_router)
