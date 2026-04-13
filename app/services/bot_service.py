@@ -22,6 +22,11 @@ class BotService:
 
         technology = bot.technology.value if hasattr(bot.technology, "value") else bot.technology
         source_type = bot.source_type.value if hasattr(bot.source_type, "value") else bot.source_type
+        execution_mode = (
+            bot.execution_mode.value
+            if hasattr(bot.execution_mode, "value")
+            else bot.execution_mode
+        )
 
         effective_current_version = (
             latest_versions.get(bot.id)
@@ -37,6 +42,7 @@ class BotService:
             "repository_id": bot.repository_id,
             "repository_name": bot.repository.name if bot.repository else None,
             "source_type": source_type,
+            "execution_mode": execution_mode,
             "source_url": bot.source_url,
             "entrypoint": bot.entrypoint,
             "requirements_file": bot.requirements_file,
@@ -47,7 +53,7 @@ class BotService:
             "created_at": bot.created_at,
             "updated_at": bot.updated_at,
         }
-
+    
     def list(
         self,
         *,
@@ -78,6 +84,11 @@ class BotService:
                 "description": bot.description,
                 "repository_id": bot.repository_id,
                 "repository_name": bot.repository.name if bot.repository else None,
+                "execution_mode": (
+                    bot.execution_mode.value
+                    if hasattr(bot.execution_mode, "value")
+                    else bot.execution_mode
+                ),
                 "current_version": latest_versions.get(bot.id) or bot.current_version or bot.release_version,
                 "release_version": bot.release_version,
                 "active": bot.active,

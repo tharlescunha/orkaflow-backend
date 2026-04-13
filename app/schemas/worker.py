@@ -76,6 +76,7 @@ class WorkerTaskNextResponse(OrkaBaseSchema):
     automation_id: int | None = None
     bot_id: int | None = None
     bot_version_id: int | None = None
+    execution_mode: str | None = None
     priority: int | None = None
     status: TaskStatus | None = None
     correlation_id: str | None = None
@@ -205,7 +206,7 @@ class WorkerSyncResponse(BaseModel):
     max_concurrency: int
     message: str
     bots: list[dict] = []
-    
+
 
 class WorkerTaskTelemetryCreate(OrkaBaseSchema):
     uuid: str
@@ -241,4 +242,28 @@ class WorkerTaskTelemetryCreate(OrkaBaseSchema):
 class WorkerTaskTelemetryResponse(OrkaBaseSchema):
     message: str
     task_id: int
+    
+class WorkerRuntimeEventCreate(OrkaBaseSchema):
+    uuid: str
+    token: str
+
+    event_type: str = Field(..., max_length=100)
+
+    task_id: int | None = None
+    automation_id: int | None = None
+    bot_id: int | None = None
+
+    execution_mode: str | None = Field(
+        default=None,
+        pattern="^(background|foreground)$",
+    )
+
+    reason: str | None = Field(default=None, max_length=100)
+    message: str | None = None
+
+
+class WorkerRuntimeEventResponse(OrkaBaseSchema):
+    message: str
+    event_id: int
+    runner_id: int
     

@@ -140,3 +140,8 @@ class CredentialValueType(str, Enum):
     TOKEN = "token"
     JSON = "json"
     SECRET = "secret"
+
+class BotExecutionMode(str, Enum):
+    BACKGROUND = "background"
+    FOREGROUND = "foreground"
+    

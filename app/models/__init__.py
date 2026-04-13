@@ -19,6 +19,7 @@ from app.models.task_parameter import TaskParameter
 from app.models.user import User
 from app.models.audit_log import AuditLog
 from app.models.task_telemetry import TaskTelemetry
+from app.models.worker_runtime_event import WorkerRuntimeEvent
 
 __all__ = [
     "Base",
@@ -41,5 +42,6 @@ __all__ = [
     "Lock",
     "Notification",
     "AuditLog",
-    "TaskTelemetry"
+    "TaskTelemetry",
+    "WorkerRuntimeEvent",
 ]

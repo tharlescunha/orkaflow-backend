@@ -1,7 +1,7 @@
 from sqlalchemy import Boolean, Enum, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.domain.enums import BotSourceType, BotTechnology
+from app.domain.enums import BotSourceType, BotTechnology, BotExecutionMode
 from app.models.base import Base, BaseModelMixin, TimestampMixin
 
 
@@ -33,6 +33,13 @@ class Bot(Base, BaseModelMixin, TimestampMixin):
         nullable=False,
     )
 
+    execution_mode: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="background",
+        index=True,
+    )
+
     source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     entrypoint: Mapped[str] = mapped_column(String(255), nullable=False)
     requirements_file: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -42,4 +49,3 @@ class Bot(Base, BaseModelMixin, TimestampMixin):
     repository = relationship("Repository", back_populates="bots")
     versions = relationship("BotVersion", back_populates="bot")
     automations = relationship("Automation", back_populates="bot")
-    

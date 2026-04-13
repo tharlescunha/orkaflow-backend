@@ -21,6 +21,7 @@ from app.repositories.task_error_repository import TaskErrorRepository
 from app.repositories.task_log_repository import TaskLogRepository
 from app.repositories.task_repository import TaskRepository
 from app.repositories.task_telemetry_repository import TaskTelemetryRepository
+from app.repositories.worker_runtime_event_repository import WorkerRuntimeEventRepository
 
 from app.repositories.bot_repository import BotRepository
 from app.models.automation import Automation
@@ -35,6 +36,7 @@ from app.schemas.worker import (
     WorkerTaskLogResponse,
     WorkerTaskActiveListResponse,
     WorkerTaskReleaseStartupLocksResponse,
+    WorkerRuntimeEventResponse,
 )
 from app.services.lock_service import LockService
 
@@ -67,8 +69,34 @@ class WorkerService:
         self.credential_repository = CredentialRepository(db)
         self.task_log_repository = TaskLogRepository(db)
         self.task_error_repository = TaskErrorRepository(db)
-        self.task_telemetry_repository = TaskTelemetryRepository(db)  # 👈 AQUI
+        self.task_telemetry_repository = TaskTelemetryRepository(db)
         self.lock_service = LockService(db)
+        self.worker_runtime_event_repository = WorkerRuntimeEventRepository(db)
+    
+    def create_runtime_event(self, payload) -> WorkerRuntimeEventResponse:
+        runner = self._authenticate_runner(payload.uuid, payload.token)
+
+        event = self.worker_runtime_event_repository.create(
+            {
+                "runner_id": runner.id,
+                "task_id": payload.task_id,
+                "automation_id": payload.automation_id,
+                "bot_id": payload.bot_id,
+                "event_type": payload.event_type,
+                "execution_mode": payload.execution_mode,
+                "reason": payload.reason,
+                "message": payload.message,
+                "created_at": datetime.now(UTC),
+            }
+        )
+
+        self.db.commit()
+
+        return WorkerRuntimeEventResponse(
+            message="Evento de runtime registrado com sucesso.",
+            event_id=event.id,
+            runner_id=runner.id,
+        )
 
     def _authenticate_runner(self, uuid: str, token: str):
         runner = self.runner_repository.get_by_uuid(uuid)
@@ -97,6 +125,7 @@ class WorkerService:
             "automation_id": None,
             "bot_id": None,
             "bot_version_id": None,
+            "execution_mode": None,
             "priority": None,
             "status": None,
             "correlation_id": None,
@@ -424,6 +453,14 @@ class WorkerService:
         parameters = self._resolve_task_parameters(task)
 
         task_bot_id = None
+        execution_mode = None
+
+        automation = (
+            self.db.query(Automation)
+            .filter(Automation.id == task.automation_id)
+            .first()
+        )
+
         if task.bot_version_id:
             bot_version = (
                 self.db.query(BotVersion)
@@ -433,12 +470,26 @@ class WorkerService:
             if bot_version:
                 task_bot_id = bot_version.bot_id
 
+        if task_bot_id is None and automation:
+            task_bot_id = automation.bot_id
+
+        if task_bot_id is not None:
+            bot = BotRepository.get_by_id(self.db, task_bot_id)
+            if bot:
+                raw_execution_mode = getattr(bot, "execution_mode", None)
+                execution_mode = (
+                    raw_execution_mode.value
+                    if hasattr(raw_execution_mode, "value")
+                    else raw_execution_mode
+                )
+
         return {
             "found": True,
             "task_id": task.id,
             "automation_id": task.automation_id,
             "bot_id": task_bot_id,
             "bot_version_id": task.bot_version_id,
+            "execution_mode": execution_mode,
             "priority": task.priority,
             "status": task.status,
             "correlation_id": task.correlation_id,
@@ -682,7 +733,6 @@ class WorkerService:
         else:
             self.task_telemetry_repository.create(data)
 
-        # atualiza atividade da task (igual logs/errors)
         task.last_update_at = datetime.now(UTC)
         self.db.add(task)
 
@@ -692,3 +742,4 @@ class WorkerService:
             "message": "Telemetria registrada com sucesso.",
             "task_id": task.id,
         }
+    

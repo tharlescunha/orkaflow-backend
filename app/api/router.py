@@ -33,6 +33,8 @@ from app.api.v1.worker_telemetry import router as worker_telemetry_router
 from app.api.v1.public_downloads import router as public_downloads_router
 from app.api.v1.worker_parameters import router as worker_parameters_router
 
+from app.api.v1.worker_runtime_events import router as worker_runtime_events_router
+
 
 api_router = APIRouter()
 
@@ -71,3 +73,5 @@ worker_router.include_router(worker_parameters_router)
 api_router.include_router(public_router)
 api_router.include_router(protected_router)
 api_router.include_router(worker_router)
+
+worker_router.include_router(worker_runtime_events_router)
