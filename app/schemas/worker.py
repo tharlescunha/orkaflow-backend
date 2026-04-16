@@ -58,9 +58,15 @@ class WorkerHeartbeatResponse(OrkaBaseSchema):
     running_tasks: int = 0
 
 
+# 🔥 ALTERAÇÃO AQUI
 class WorkerTaskNextRequest(OrkaBaseSchema):
     uuid: str
     token: str
+    execution_mode: str = Field(
+        ...,
+        pattern="^(background|foreground)$",
+        description="Define se o worker quer tasks de background ou foreground",
+    )
 
 
 class WorkerTaskParameterRead(OrkaBaseSchema):
@@ -242,7 +248,8 @@ class WorkerTaskTelemetryCreate(OrkaBaseSchema):
 class WorkerTaskTelemetryResponse(OrkaBaseSchema):
     message: str
     task_id: int
-    
+
+
 class WorkerRuntimeEventCreate(OrkaBaseSchema):
     uuid: str
     token: str

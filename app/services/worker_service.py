@@ -72,7 +72,7 @@ class WorkerService:
         self.task_telemetry_repository = TaskTelemetryRepository(db)
         self.lock_service = LockService(db)
         self.worker_runtime_event_repository = WorkerRuntimeEventRepository(db)
-    
+
     def create_runtime_event(self, payload) -> WorkerRuntimeEventResponse:
         runner = self._authenticate_runner(payload.uuid, payload.token)
 
@@ -141,6 +141,57 @@ class WorkerService:
         if not config or config.max_concurrency is None:
             return 1
         return max(1, config.max_concurrency)
+
+    def _normalize_execution_mode(self, value) -> str | None:
+        if value is None:
+            return None
+
+        text = str(value).strip().lower()
+        if not text:
+            return None
+
+        if text not in {"background", "foreground"}:
+            return None
+
+        return text
+
+    def _resolve_task_bot_context(self, task) -> tuple[int | None, str | None]:
+        task_bot_id = None
+        execution_mode = None
+
+        automation = (
+            self.db.query(Automation)
+            .filter(Automation.id == task.automation_id)
+            .first()
+        )
+
+        if task.bot_version_id:
+            bot_version = (
+                self.db.query(BotVersion)
+                .filter(BotVersion.id == task.bot_version_id)
+                .first()
+            )
+            if bot_version:
+                task_bot_id = bot_version.bot_id
+
+        if task_bot_id is None and automation:
+            task_bot_id = automation.bot_id
+
+        if task_bot_id is not None:
+            bot = BotRepository.get_by_id(self.db, task_bot_id)
+            if bot:
+                raw_execution_mode = getattr(bot, "execution_mode", None)
+                execution_mode = (
+                    raw_execution_mode.value
+                    if hasattr(raw_execution_mode, "value")
+                    else raw_execution_mode
+                )
+
+        return task_bot_id, self._normalize_execution_mode(execution_mode)
+
+    def _resolve_requested_execution_mode(self, payload) -> str | None:
+        raw_mode = getattr(payload, "execution_mode", None)
+        return self._normalize_execution_mode(raw_mode)
 
     def _resolve_task_parameters(self, task) -> list[dict]:
         parameters: list[dict] = []
@@ -343,6 +394,7 @@ class WorkerService:
                     "storage_type": active_version.storage_type if active_version else None,
                     "artifact_path": active_version.artifact_path if active_version else None,
                     "checksum": active_version.checksum if active_version else None,
+                    "execution_mode": self._normalize_execution_mode(getattr(bot, "execution_mode", None).value if hasattr(getattr(bot, "execution_mode", None), "value") else getattr(bot, "execution_mode", None)),
                 }
             )
             added_bot_ids.add(bot.id)
@@ -435,68 +487,49 @@ class WorkerService:
         if active_count >= max_concurrency:
             return self._empty_next_task_response()
 
+        requested_execution_mode = self._resolve_requested_execution_mode(payload)
         candidates = self.task_repository.list_waiting_candidates_for_runner(runner.id)
 
-        task = None
+        selected_task = None
+        selected_task_bot_id = None
+        selected_execution_mode = None
+
         for candidate in candidates:
             if not self.task_repository.automation_has_runner_link(
                 candidate.automation_id,
                 runner.id,
             ):
                 continue
-            task = candidate
+
+            candidate_bot_id, candidate_execution_mode = self._resolve_task_bot_context(candidate)
+
+            if requested_execution_mode is not None and candidate_execution_mode != requested_execution_mode:
+                continue
+
+            selected_task = candidate
+            selected_task_bot_id = candidate_bot_id
+            selected_execution_mode = candidate_execution_mode
             break
 
-        if not task:
+        if not selected_task:
             return self._empty_next_task_response()
 
-        parameters = self._resolve_task_parameters(task)
-
-        task_bot_id = None
-        execution_mode = None
-
-        automation = (
-            self.db.query(Automation)
-            .filter(Automation.id == task.automation_id)
-            .first()
-        )
-
-        if task.bot_version_id:
-            bot_version = (
-                self.db.query(BotVersion)
-                .filter(BotVersion.id == task.bot_version_id)
-                .first()
-            )
-            if bot_version:
-                task_bot_id = bot_version.bot_id
-
-        if task_bot_id is None and automation:
-            task_bot_id = automation.bot_id
-
-        if task_bot_id is not None:
-            bot = BotRepository.get_by_id(self.db, task_bot_id)
-            if bot:
-                raw_execution_mode = getattr(bot, "execution_mode", None)
-                execution_mode = (
-                    raw_execution_mode.value
-                    if hasattr(raw_execution_mode, "value")
-                    else raw_execution_mode
-                )
+        parameters = self._resolve_task_parameters(selected_task)
 
         return {
             "found": True,
-            "task_id": task.id,
-            "automation_id": task.automation_id,
-            "bot_id": task_bot_id,
-            "bot_version_id": task.bot_version_id,
-            "execution_mode": execution_mode,
-            "priority": task.priority,
-            "status": task.status,
-            "correlation_id": task.correlation_id,
-            "queue_name": task.queue_name,
-            "requested_start_at": task.requested_start_at,
-            "timeout_seconds": task.timeout_seconds,
-            "inactivity_timeout_seconds": task.inactivity_timeout_seconds,
+            "task_id": selected_task.id,
+            "automation_id": selected_task.automation_id,
+            "bot_id": selected_task_bot_id,
+            "bot_version_id": selected_task.bot_version_id,
+            "execution_mode": selected_execution_mode,
+            "priority": selected_task.priority,
+            "status": selected_task.status,
+            "correlation_id": selected_task.correlation_id,
+            "queue_name": selected_task.queue_name,
+            "requested_start_at": selected_task.requested_start_at,
+            "timeout_seconds": selected_task.timeout_seconds,
+            "inactivity_timeout_seconds": selected_task.inactivity_timeout_seconds,
             "parameters": parameters,
         }
 
@@ -742,4 +775,3 @@ class WorkerService:
             "message": "Telemetria registrada com sucesso.",
             "task_id": task.id,
         }
-    
