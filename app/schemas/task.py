@@ -216,13 +216,32 @@ class TaskParameterListResponse(OrkaBaseSchema):
     total: int
 
 
+class TaskFilterOptionItem(OrkaBaseSchema):
+    id: int
+    name: str
+    label: str | None = None
+
+
+class TaskFilterOptionsResponse(OrkaBaseSchema):
+    automations: list[TaskFilterOptionItem] = []
+    runners: list[TaskFilterOptionItem] = []
+    statuses: list[TaskStatus] = []
+
+
 class TaskFilters(OrkaBaseSchema):
     status: TaskStatus | None = None
+    statuses: list[TaskStatus] | None = None
+
     automation_id: int | None = None
+    automation_ids: list[int] | None = None
+
     runner_id: int | None = None
+    runner_ids: list[int] | None = None
+
     created_by: int | None = None
 
 
 class TaskManualCreateResponse(OrkaBaseSchema):
     message: str
     task: TaskRead
+    

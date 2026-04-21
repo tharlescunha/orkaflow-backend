@@ -1,7 +1,5 @@
 from datetime import UTC, datetime
 
-from sqlalchemy.orm import Session
-
 from app.core.exceptions import NotFoundException, ValidationException
 from app.domain.enums import ExecutionMode, TaskStatus
 from app.repositories.runner_repository import RunnerRepository
@@ -47,7 +45,7 @@ def _calculate_execution_duration_seconds(task) -> int | None:
 
 
 class TaskService:
-    def __init__(self, db: Session):
+    def __init__(self, db):
         self.db = db
         self.repository = TaskRepository(db)
         self.runner_repository = RunnerRepository(db)
@@ -192,22 +190,46 @@ class TaskService:
             "runner_usage": self._build_runner_usage_payload(task),
         }
 
+    def get_filter_options(self):
+        automations = self.repository.list_active_automation_options()
+        runners = self.repository.list_active_runner_options()
+
+        return {
+            "automations": [
+                {
+                    "id": automation.id,
+                    "name": automation.name,
+                    "label": automation.name,
+                }
+                for automation in automations
+            ],
+            "runners": [
+                {
+                    "id": runner.id,
+                    "name": runner.name,
+                    "label": runner.label or runner.name,
+                }
+                for runner in runners
+            ],
+            "statuses": [status for status in TaskStatus],
+        }
+
     def list_tasks(
         self,
         *,
         skip: int = 0,
         limit: int = 100,
-        status=None,
-        automation_id: int | None = None,
-        runner_id: int | None = None,
+        statuses: list[TaskStatus] | None = None,
+        automation_ids: list[int] | None = None,
+        runner_ids: list[int] | None = None,
         created_by: int | None = None,
     ):
         items, total = self.repository.list_all(
             skip=skip,
             limit=limit,
-            status=status,
-            automation_id=automation_id,
-            runner_id=runner_id,
+            statuses=statuses,
+            automation_ids=automation_ids,
+            runner_ids=runner_ids,
             created_by=created_by,
         )
 

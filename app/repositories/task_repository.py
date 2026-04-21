@@ -6,7 +6,6 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.domain.enums import TaskStatus
 from app.models.automation import Automation
-from app.models.automation_parameter import AutomationParameter
 from app.models.automation_runner import AutomationRunner
 from app.models.bot_version import BotVersion
 from app.models.runner import Runner
@@ -52,25 +51,25 @@ class TaskRepository:
         *,
         skip: int = 0,
         limit: int = 100,
-        status=None,
-        automation_id: int | None = None,
-        runner_id: int | None = None,
+        statuses: list[TaskStatus] | None = None,
+        automation_ids: list[int] | None = None,
+        runner_ids: list[int] | None = None,
         created_by: int | None = None,
     ) -> tuple[Sequence[Task], int]:
         stmt = self._list_query()
         count_stmt = select(func.count(Task.id))
 
-        if status is not None:
-            stmt = stmt.where(Task.status == status)
-            count_stmt = count_stmt.where(Task.status == status)
+        if statuses:
+            stmt = stmt.where(Task.status.in_(statuses))
+            count_stmt = count_stmt.where(Task.status.in_(statuses))
 
-        if automation_id is not None:
-            stmt = stmt.where(Task.automation_id == automation_id)
-            count_stmt = count_stmt.where(Task.automation_id == automation_id)
+        if automation_ids:
+            stmt = stmt.where(Task.automation_id.in_(automation_ids))
+            count_stmt = count_stmt.where(Task.automation_id.in_(automation_ids))
 
-        if runner_id is not None:
-            stmt = stmt.where(Task.runner_id == runner_id)
-            count_stmt = count_stmt.where(Task.runner_id == runner_id)
+        if runner_ids:
+            stmt = stmt.where(Task.runner_id.in_(runner_ids))
+            count_stmt = count_stmt.where(Task.runner_id.in_(runner_ids))
 
         if created_by is not None:
             stmt = stmt.where(Task.created_by == created_by)
@@ -82,6 +81,22 @@ class TaskRepository:
         total = self.db.execute(count_stmt).scalar_one()
 
         return items, total
+
+    def list_active_automation_options(self) -> Sequence[Automation]:
+        stmt = (
+            select(Automation)
+            .where(Automation.active == True)
+            .order_by(Automation.name.asc())
+        )
+        return self.db.execute(stmt).scalars().all()
+
+    def list_active_runner_options(self) -> Sequence[Runner]:
+        stmt = (
+            select(Runner)
+            .where(Runner.enabled == True)
+            .order_by(Runner.name.asc())
+        )
+        return self.db.execute(stmt).scalars().all()
 
     def create(self, data: dict) -> Task:
         task = Task(**data)
@@ -136,7 +151,9 @@ class TaskRepository:
         )
         return self.db.execute(stmt).scalars().first()
 
-    def get_automation_parameters(self, automation_id: int) -> Sequence[AutomationParameter]:
+    def get_automation_parameters(self, automation_id: int):
+        from app.models.automation_parameter import AutomationParameter
+
         stmt = (
             select(AutomationParameter)
             .where(AutomationParameter.automation_id == automation_id)

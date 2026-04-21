@@ -1,11 +1,14 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.orm import Session
 
 from app.api.router import api_router
 from app.core.config import get_settings
 from app.core.exceptions import OrkaFlowException
 from app.core.logging import logger
-from fastapi.middleware.cors import CORSMiddleware
+from app.core.database import SessionLocal
+from app.services.permission_service import PermissionService
 
 settings = get_settings()
 
@@ -15,6 +18,9 @@ app = FastAPI(
     debug=settings.app_debug,
 )
 
+# ==========================================================
+# CORS
+# ==========================================================
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -26,7 +32,31 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ==========================================================
+# SEED DE PERMISSÕES
+# ==========================================================
+def seed_default_permissions() -> None:
+    db: Session = SessionLocal()
+    try:
+        result = PermissionService(db).seed_defaults()
+        logger.info(f"Permissões seed executado: {result}")
+    except Exception as e:
+        logger.exception(f"Erro ao executar seed de permissões: {e}")
+    finally:
+        db.close()
 
+
+# ==========================================================
+# STARTUP
+# ==========================================================
+@app.on_event("startup")
+def on_startup():
+    seed_default_permissions()
+
+
+# ==========================================================
+# MIDDLEWARE
+# ==========================================================
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     logger.info(f"HTTP {request.method} {request.url.path}")
@@ -37,6 +67,9 @@ async def log_requests(request: Request, call_next):
     return response
 
 
+# ==========================================================
+# EXCEPTION HANDLERS
+# ==========================================================
 @app.exception_handler(OrkaFlowException)
 async def orkaflow_exception_handler(request: Request, exc: OrkaFlowException):
     logger.warning(f"OrkaFlowException em {request.url.path}: {exc.detail}")
@@ -55,4 +88,7 @@ async def generic_exception_handler(request: Request, exc: Exception):
     )
 
 
+# ==========================================================
+# ROUTES
+# ==========================================================
 app.include_router(api_router, prefix=settings.api_prefix)

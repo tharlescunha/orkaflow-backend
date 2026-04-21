@@ -2,6 +2,7 @@ from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, BaseModelMixin
+from sqlalchemy.orm import relationship
 
 
 class AuditLog(Base, BaseModelMixin):
@@ -19,5 +20,7 @@ class AuditLog(Base, BaseModelMixin):
     metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False)
 
-    actor_user = relationship("User")
-    
+    actor_user = relationship(
+        "User",
+        back_populates="audit_logs",
+    )

@@ -1,51 +1,16 @@
-# app/api/deps.py
+from __future__ import annotations
 
-# Depends:
-# usado pelo FastAPI para injetar dependências automaticamente nas rotas.
 from fastapi import Depends
-
-# HTTPAuthorizationCredentials:
-# representa o conteúdo do header Authorization já interpretado pelo FastAPI.
-#
-# HTTPBearer:
-# cria o esquema de autenticação Bearer para uso nas rotas
-# e também ajuda a documentar isso no Swagger.
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.orm import Session, selectinload
 
-# Session:
-# sessão do SQLAlchemy para acessar o banco de dados.
-from sqlalchemy.orm import Session
-
-# get_db:
-# dependência que entrega a sessão do banco para cada request.
 from app.core.database import get_db
-
-# Exceções personalizadas da aplicação.
 from app.core.exceptions import ForbiddenException, UnauthorizedException
-
-# Função responsável por decodificar e validar o JWT.
 from app.core.security import decode_token
-
-# Repositório de usuários para buscar o usuário autenticado no banco.
+from app.models.user import User
 from app.repositories.user_repository import UserRepository
 
 
-# ==========================================================
-# ESQUEMA DE AUTENTICAÇÃO BEARER
-# ==========================================================
-# Esse objeto:
-# 1. lê o header Authorization
-# 2. espera o padrão "Bearer <token>"
-# 3. faz o Swagger mostrar que a API usa autenticação Bearer
-#
-# auto_error=True:
-# se o header Authorization não for enviado, o FastAPI já acusa erro.
-#
-# bearerFormat="JWT":
-# ajuda a documentação a indicar que o Bearer Token é um JWT.
-#
-# description:
-# texto mostrado na documentação para orientar o uso do token.
 bearer_scheme = HTTPBearer(
     auto_error=True,
     bearerFormat="JWT",
@@ -53,86 +18,86 @@ bearer_scheme = HTTPBearer(
 )
 
 
-# ==========================================================
-# DEPENDÊNCIA: USUÁRIO AUTENTICADO
-# ==========================================================
-# Essa função é a base da proteção das rotas privadas.
-#
-# O fluxo dela é:
-# 1. captura o token enviado no Authorization
-# 2. decodifica o token JWT
-# 3. valida se é token de acesso
-# 4. obtém o usuário pelo ID presente no token
-# 5. valida se o usuário existe e está ativo
-# 6. retorna o usuário autenticado
-#
-# Sempre que uma rota usar:
-# Depends(get_current_user)
-# ela exigirá token Bearer válido.
 def get_current_user(
-    # credentials:
-    # recebe automaticamente o Authorization Bearer enviado na request.
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
-
-    # db:
-    # recebe automaticamente a sessão do banco.
     db: Session = Depends(get_db),
-):
-    # Extrai apenas o valor do token, sem a palavra "Bearer".
+) -> User:
     token = credentials.credentials
 
-    # Tenta decodificar e validar o token JWT.
     try:
         payload = decode_token(token)
-
-    # Se o token for inválido, expirado ou malformado,
-    # dispara erro de não autorizado.
     except ValueError as exc:
         raise UnauthorizedException(str(exc)) from exc
 
-    # Garante que o token usado seja um token de acesso.
-    # Isso evita usar refresh token em endpoint protegido.
     if payload.get("type") != "access":
         raise UnauthorizedException("Token de acesso inválido.")
 
-    # Recupera o ID do usuário a partir do claim "sub".
     user_id = payload.get("sub")
-
-    # Se não houver identificador no token, ele é inválido.
     if not user_id:
         raise UnauthorizedException("Token inválido.")
 
-    # Busca o usuário no banco.
     user = UserRepository(db).get_by_id(int(user_id))
-
-    # Se não encontrar o usuário, o token não serve mais.
     if not user:
         raise UnauthorizedException("Usuário não encontrado.")
 
-    # Se o usuário estiver inativo, bloqueia o acesso.
     if not user.active:
         raise ForbiddenException("Usuário inativo.")
 
-    # Retorna o usuário autenticado para ser usado na rota.
+    if user.profile_id is not None and user.profile and not user.profile.active:
+        raise ForbiddenException("O perfil vinculado ao usuário está inativo.")
+
     return user
 
 
-# ==========================================================
-# DEPENDÊNCIA: USUÁRIO ADMINISTRADOR
-# ==========================================================
-# Essa função depende primeiro de get_current_user.
-# Então:
-# - já exige token válido
-# - já garante que o usuário existe
-# - já garante que está ativo
-#
-# Depois disso, ela valida se o role do usuário é admin.
-#
-# Use essa dependência em endpoints administrativos.
-def require_admin(current_user=Depends(get_current_user)):
-    # Verifica se o papel do usuário permite acesso administrativo.
-    if current_user.role not in {"admin"}:
-        raise ForbiddenException("Acesso permitido apenas para administradores.")
+def _is_legacy_admin(user: User) -> bool:
+    role_value = getattr(user, "role", None)
 
-    # Se passar, retorna o usuário autenticado.
-    return current_user
+    if role_value is None:
+        return False
+
+    if hasattr(role_value, "value"):
+        role_value = role_value.value
+
+    return str(role_value).lower() == "admin"
+
+
+def _user_has_permission(user: User, module: str, action: str) -> bool:
+    if _is_legacy_admin(user):
+        return True
+
+    if not user.profile or not user.profile.active:
+        return False
+
+    normalized_module = module.strip().lower()
+    normalized_action = action.strip().lower()
+
+    for permission in user.profile.permissions or []:
+        permission_module = (permission.module or "").strip().lower()
+        permission_action = (permission.action or "").strip().lower()
+
+        if permission_module == normalized_module and permission_action == normalized_action:
+            return True
+
+    return False
+
+
+def require_admin(current_user: User = Depends(get_current_user)) -> User:
+    if _is_legacy_admin(current_user):
+        return current_user
+
+    if _user_has_permission(current_user, "users", "admin"):
+        return current_user
+
+    raise ForbiddenException("Acesso permitido apenas para administradores.")
+
+
+def require_permission(module: str, action: str):
+    def dependency(current_user: User = Depends(get_current_user)) -> User:
+        if _user_has_permission(current_user, module, action):
+            return current_user
+
+        raise ForbiddenException(
+            f"Você não possui permissão para executar '{action}' no módulo '{module}'."
+        )
+
+    return dependency

@@ -1,5 +1,3 @@
-# app/api/v1/tasks.py
-
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
@@ -8,6 +6,7 @@ from app.domain.enums import TaskStatus
 from app.schemas.task import (
     TaskActionResponse,
     TaskCreate,
+    TaskFilterOptionsResponse,
     TaskListResponse,
     TaskManualCreateResponse,
     TaskParameterListResponse,
@@ -22,22 +21,44 @@ def get_task_service(db: Session = Depends(get_db)) -> TaskService:
     return TaskService(db)
 
 
+@router.get("/filter-options", response_model=TaskFilterOptionsResponse)
+def get_task_filter_options(
+    service: TaskService = Depends(get_task_service),
+):
+    return service.get_filter_options()
+
+
 @router.get("/", response_model=TaskListResponse)
 def list_tasks(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
     status_filter: TaskStatus | None = Query(None, alias="status"),
+    statuses: list[TaskStatus] | None = Query(None),
     automation_id: int | None = Query(None),
+    automation_ids: list[int] | None = Query(None),
     runner_id: int | None = Query(None),
+    runner_ids: list[int] | None = Query(None),
     created_by: int | None = Query(None),
     service: TaskService = Depends(get_task_service),
 ):
+    final_statuses = statuses
+    if final_statuses is None and status_filter is not None:
+        final_statuses = [status_filter]
+
+    final_automation_ids = automation_ids
+    if final_automation_ids is None and automation_id is not None:
+        final_automation_ids = [automation_id]
+
+    final_runner_ids = runner_ids
+    if final_runner_ids is None and runner_id is not None:
+        final_runner_ids = [runner_id]
+
     items, total = service.list_tasks(
         skip=skip,
         limit=limit,
-        status=status_filter,
-        automation_id=automation_id,
-        runner_id=runner_id,
+        statuses=final_statuses,
+        automation_ids=final_automation_ids,
+        runner_ids=final_runner_ids,
         created_by=created_by,
     )
     return TaskListResponse(items=items, total=total)
