@@ -39,23 +39,23 @@ http://10.50.156.202:8000/docs
 ## ▶️ Comandos
 
 ### Iniciar
-sudo systemctl start orkaflow-api
+sudo systemctl start orkaflow-api <br>
 sudo systemctl start orkaflow-workers
 
 ### Parar
-sudo systemctl stop orkaflow-api
+sudo systemctl stop orkaflow-api <br>
 sudo systemctl stop orkaflow-workers
 
 ### Reiniciar
-sudo systemctl restart orkaflow-api
+sudo systemctl restart orkaflow-api <br>
 sudo systemctl restart orkaflow-workers
 
 ### Status
-sudo systemctl status orkaflow-api
+sudo systemctl status orkaflow-api <br>
 sudo systemctl status orkaflow-workers
 
 ### Logs
-journalctl -u orkaflow-api -f
+journalctl -u orkaflow-api -f <br>
 journalctl -u orkaflow-workers -f
 
 ---
@@ -66,15 +66,15 @@ sudo systemctl daemon-reload
 ---
 
 ## 🔁 Auto start
-sudo systemctl enable orkaflow-api
+sudo systemctl enable orkaflow-api <br>
 sudo systemctl enable orkaflow-workers
 
 ---
 
 ## ❌ Remover serviço
 
-sudo systemctl stop orkaflow-api
-sudo rm /etc/systemd/system/orkaflow-api.service
+sudo systemctl stop orkaflow-api <br>
+sudo rm /etc/systemd/system/orkaflow-api.service <br>
 sudo systemctl daemon-reload
 
 ---
@@ -96,7 +96,7 @@ python -m app.workers.main
 
 ## 🔐 Dependências
 
-sudo apt install unixodbc unixodbc-dev
+sudo apt install unixodbc unixodbc-dev <br>
 sudo ACCEPT_EULA=Y apt install msodbcsql18
 
 ---
