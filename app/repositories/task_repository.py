@@ -52,10 +52,16 @@ class TaskRepository:
         skip: int = 0,
         limit: int = 100,
         statuses: list[TaskStatus] | None = None,
+        status: TaskStatus | None = None,  # 🔥 NOVO
         automation_ids: list[int] | None = None,
         runner_ids: list[int] | None = None,
         created_by: int | None = None,
     ) -> tuple[Sequence[Task], int]:
+
+        # 🔥 compatibilidade com código antigo
+        if status and not statuses:
+            statuses = [status]
+
         stmt = self._list_query()
         count_stmt = select(func.count(Task.id))
 

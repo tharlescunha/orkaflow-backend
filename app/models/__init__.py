@@ -1,3 +1,5 @@
+from app.models.access_control import Permission, Profile
+from app.models.audit_log import AuditLog
 from app.models.automation import Automation
 from app.models.automation_parameter import AutomationParameter
 from app.models.automation_runner import AutomationRunner
@@ -16,15 +18,17 @@ from app.models.task import Task
 from app.models.task_error import TaskError
 from app.models.task_log import TaskLog
 from app.models.task_parameter import TaskParameter
-from app.models.user import User
-from app.models.audit_log import AuditLog
 from app.models.task_telemetry import TaskTelemetry
+from app.models.user import User
 from app.models.worker_runtime_event import WorkerRuntimeEvent
+
 
 __all__ = [
     "Base",
     "Repository",
     "User",
+    "Profile",
+    "Permission",
     "Runner",
     "RunnerConfig",
     "Bot",
