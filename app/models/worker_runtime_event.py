@@ -3,10 +3,10 @@ from datetime import datetime
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.models.base import Base, BaseModelMixin
+from app.models.base import Base, BaseModelMixin, TimestampMixin
 
 
-class WorkerRuntimeEvent(Base, BaseModelMixin):
+class WorkerRuntimeEvent(Base, BaseModelMixin, TimestampMixin):
     __tablename__ = "worker_runtime_events"
 
     runner_id: Mapped[int] = mapped_column(
@@ -54,12 +54,6 @@ class WorkerRuntimeEvent(Base, BaseModelMixin):
     message: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,
-    )
-
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        index=True,
     )
 
     runner = relationship("Runner")

@@ -1,13 +1,13 @@
-# app\models\task_log.py
+# app/models/task_log.py
 
 from sqlalchemy import Enum, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.domain.enums import TaskLogLevel, TaskLogSource
-from app.models.base import Base, BaseModelMixin
+from app.models.base import Base, BaseModelMixin, TimestampMixin
 
 
-class TaskLog(Base, BaseModelMixin):
+class TaskLog(Base, BaseModelMixin, TimestampMixin):
     __tablename__ = "task_logs"
 
     task_id: Mapped[int] = mapped_column(
@@ -35,3 +35,4 @@ class TaskLog(Base, BaseModelMixin):
     event_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
 
     task = relationship("Task", back_populates="logs")
+    

@@ -1,12 +1,14 @@
+# app/models/task_telemetry.py
+
 from datetime import datetime
 
 from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.models.base import Base, BaseModelMixin
+from app.models.base import Base, BaseModelMixin, TimestampMixin
 
 
-class TaskTelemetry(Base, BaseModelMixin):
+class TaskTelemetry(Base, BaseModelMixin, TimestampMixin):
     __tablename__ = "task_telemetries"
 
     task_id: Mapped[int] = mapped_column(
@@ -107,11 +109,6 @@ class TaskTelemetry(Base, BaseModelMixin):
     payload_json: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,
-    )
-
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
     )
 
     task = relationship("Task", back_populates="telemetry")

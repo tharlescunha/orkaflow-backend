@@ -4,10 +4,10 @@ from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, Tex
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.domain.enums import ExecutionMode, TaskStatus
-from app.models.base import Base, BaseModelMixin
+from app.models.base import Base, BaseModelMixin, TimestampMixin
 
 
-class Task(Base, BaseModelMixin):
+class Task(Base, BaseModelMixin, TimestampMixin):
     __tablename__ = "tasks"
 
     automation_id: Mapped[int] = mapped_column(
@@ -67,7 +67,6 @@ class Task(Base, BaseModelMixin):
     queue_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     inactivity_timeout_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     runner_claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     automation = relationship("Automation", back_populates="tasks")
     bot_version = relationship("BotVersion", back_populates="tasks")

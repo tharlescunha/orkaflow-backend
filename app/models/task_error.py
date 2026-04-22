@@ -1,13 +1,13 @@
-# app\models\task_error.py
+# app/models/task_error.py
 
 from sqlalchemy import Boolean, Enum, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.domain.enums import ErrorCategory, TaskLogSource
-from app.models.base import Base, BaseModelMixin
+from app.models.base import Base, BaseModelMixin, TimestampMixin
 
 
-class TaskError(Base, BaseModelMixin):
+class TaskError(Base, BaseModelMixin, TimestampMixin):
     __tablename__ = "task_errors"
 
     task_id: Mapped[int] = mapped_column(
@@ -30,3 +30,4 @@ class TaskError(Base, BaseModelMixin):
     code: Mapped[str | None] = mapped_column(String(80), nullable=True)
 
     task = relationship("Task", back_populates="errors")
+    

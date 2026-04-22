@@ -3,10 +3,10 @@
 from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.models.base import Base, BaseModelMixin
+from app.models.base import Base, BaseModelMixin, TimestampMixin
 
 
-class TaskParameter(Base, BaseModelMixin):
+class TaskParameter(Base, BaseModelMixin, TimestampMixin):
     __tablename__ = "task_parameters"
 
     task_id: Mapped[int] = mapped_column(
@@ -23,3 +23,4 @@ class TaskParameter(Base, BaseModelMixin):
     )
 
     task = relationship("Task", back_populates="parameters")
+    

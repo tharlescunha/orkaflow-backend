@@ -1,8 +1,7 @@
 from sqlalchemy import Boolean, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.models.base import Base, BaseModelMixin
-from app.models.base import TimestampMixin
+from app.models.base import Base, BaseModelMixin, TimestampMixin
 
 
 class BotVersion(Base, BaseModelMixin, TimestampMixin):

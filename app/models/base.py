@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Integer, MetaData
+from sqlalchemy import DateTime, Integer, MetaData, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -33,11 +33,14 @@ class TimestampMixin:
         DateTime(timezone=True),
         nullable=False,
         default=utc_now,
+        server_default=func.sysdatetimeoffset(),  # 🔥 proteção no banco
     )
+
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         default=utc_now,
         onupdate=utc_now,
+        server_default=func.sysdatetimeoffset(),  # 🔥 proteção no banco
     )
     
