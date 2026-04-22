@@ -50,6 +50,48 @@ class TaskService:
         self.repository = TaskRepository(db)
         self.runner_repository = RunnerRepository(db)
 
+    def _get_automation_name(self, task) -> str | None:
+        if not getattr(task, "automation", None):
+            return None
+
+        return task.automation.label or task.automation.name
+
+    def _get_bot_version_label(self, task) -> str | None:
+        if not getattr(task, "bot_version", None):
+            return None
+
+        return getattr(task.bot_version, "version", None)
+
+    def _get_runner_name(self, task) -> str | None:
+        if not getattr(task, "runner", None):
+            return None
+
+        return task.runner.name
+
+    def _get_runner_label(self, task) -> str | None:
+        if not getattr(task, "runner", None):
+            return None
+
+        return task.runner.label
+
+    def _get_runner_display_name(self, task) -> str | None:
+        if not getattr(task, "runner", None):
+            return None
+
+        return task.runner.label or task.runner.name
+
+    def _get_created_by_name(self, task) -> str | None:
+        if not getattr(task, "created_by_user", None):
+            return None
+
+        return task.created_by_user.name
+
+    def _get_schedule_name(self, task) -> str | None:
+        if not getattr(task, "schedule", None):
+            return None
+
+        return task.schedule.name
+
     def _build_telemetry_payload(self, task):
         if not task.telemetry:
             return None
@@ -104,6 +146,7 @@ class TaskService:
             "uuid": runner.uuid,
             "name": runner.name,
             "label": runner.label,
+            "display_name": runner.label or runner.name,
             "host_name": runner.host_name,
             "ip": runner.ip,
             "os_name": runner.os_name,
@@ -159,10 +202,17 @@ class TaskService:
         return {
             "id": task.id,
             "automation_id": task.automation_id,
+            "automation_name": self._get_automation_name(task),
             "bot_version_id": task.bot_version_id,
+            "bot_version_label": self._get_bot_version_label(task),
             "runner_id": task.runner_id,
+            "runner_name": self._get_runner_name(task),
+            "runner_label": self._get_runner_label(task),
+            "runner_display_name": self._get_runner_display_name(task),
             "created_by": task.created_by,
+            "created_by_name": self._get_created_by_name(task),
             "schedule_id": task.schedule_id,
+            "schedule_name": self._get_schedule_name(task),
             "parent_task_id": task.parent_task_id,
             "priority": task.priority,
             "status": task.status,
@@ -188,6 +238,7 @@ class TaskService:
             "telemetry": self._build_telemetry_payload(task),
             "runner_details": self._build_runner_details_payload(task),
             "runner_usage": self._build_runner_usage_payload(task),
+            "execution_duration_seconds": _calculate_execution_duration_seconds(task),
         }
 
     def get_filter_options(self):
@@ -199,7 +250,7 @@ class TaskService:
                 {
                     "id": automation.id,
                     "name": automation.name,
-                    "label": automation.name,
+                    "label": automation.label or automation.name,
                 }
                 for automation in automations
             ],
@@ -239,14 +290,17 @@ class TaskService:
                 {
                     "id": task.id,
                     "automation_id": task.automation_id,
-                    "automation_name": task.automation.name if task.automation else None,
+                    "automation_name": self._get_automation_name(task),
                     "bot_version_id": task.bot_version_id,
-                    "bot_version_label": getattr(task.bot_version, "version", None),
+                    "bot_version_label": self._get_bot_version_label(task),
                     "runner_id": task.runner_id,
-                    "runner_name": task.runner.name if task.runner else None,
+                    "runner_name": self._get_runner_name(task),
+                    "runner_label": self._get_runner_label(task),
+                    "runner_display_name": self._get_runner_display_name(task),
                     "created_by": task.created_by,
-                    "created_by_name": task.created_by_user.name if task.created_by_user else None,
+                    "created_by_name": self._get_created_by_name(task),
                     "schedule_id": task.schedule_id,
+                    "schedule_name": self._get_schedule_name(task),
                     "priority": task.priority,
                     "status": task.status,
                     "requested_start_at": task.requested_start_at,

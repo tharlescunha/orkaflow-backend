@@ -1,6 +1,12 @@
+from datetime import datetime, timezone
+
 from sqlalchemy.orm import Session
 
 from app.models.bot_version import BotVersion
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 class BotVersionRepository:
@@ -27,7 +33,12 @@ class BotVersionRepository:
 
     @staticmethod
     def create(db: Session, data: dict):
-        bot_version = BotVersion(**data)
+        payload = dict(data)
+
+        payload.setdefault("created_at", utc_now())
+        payload.setdefault("updated_at", utc_now())
+
+        bot_version = BotVersion(**payload)
         db.add(bot_version)
         db.commit()
         db.refresh(bot_version)
@@ -37,6 +48,8 @@ class BotVersionRepository:
     def update(db: Session, bot_version: BotVersion, data: dict):
         for key, value in data.items():
             setattr(bot_version, key, value)
+
+        bot_version.updated_at = utc_now()
 
         db.commit()
         db.refresh(bot_version)

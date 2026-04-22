@@ -65,6 +65,7 @@ class TaskRunnerRead(OrkaBaseSchema):
     uuid: str
     name: str
     label: str | None = None
+    display_name: str | None = None
     host_name: str | None = None
     ip: str | None = None
     os_name: str | None = None
@@ -137,12 +138,26 @@ class TaskActionResponse(OrkaBaseSchema):
 
 class TaskRead(OrkaBaseSchema):
     id: int
+
     automation_id: int
+    automation_name: str | None = None
+
     bot_version_id: int
+    bot_version_label: str | None = None
+
     runner_id: int | None = None
+    runner_name: str | None = None
+    runner_label: str | None = None
+    runner_display_name: str | None = None
+
     created_by: int | None = None
+    created_by_name: str | None = None
+
     schedule_id: int | None = None
+    schedule_name: str | None = None
+
     parent_task_id: int | None = None
+
     priority: int
     status: TaskStatus
     requested_start_at: datetime | None = None
@@ -150,19 +165,26 @@ class TaskRead(OrkaBaseSchema):
     finished_at: datetime | None = None
     last_update_at: datetime | None = None
     final_message: str | None = None
+
     items_processed: int
     items_failed: int
+
     timeout_seconds: int
     retry_count: int
     execution_mode: ExecutionMode
     dispatch_attempts: int
     stop_requested: bool
+
     correlation_id: str | None = None
     queue_name: str | None = None
     inactivity_timeout_seconds: int | None = None
     runner_claimed_at: datetime | None = None
+
     created_at: datetime
     updated_at: datetime | None = None
+
+    execution_duration_seconds: int | None = None
+
     parameters: list[TaskParameterRead] = []
 
     telemetry: TaskTelemetryRead | None = None
@@ -172,6 +194,7 @@ class TaskRead(OrkaBaseSchema):
 
 class TaskListItem(OrkaBaseSchema):
     id: int
+
     automation_id: int
     automation_name: str | None = None
 
@@ -180,11 +203,15 @@ class TaskListItem(OrkaBaseSchema):
 
     runner_id: int | None = None
     runner_name: str | None = None
+    runner_label: str | None = None
+    runner_display_name: str | None = None
 
     created_by: int | None = None
     created_by_name: str | None = None
 
     schedule_id: int | None = None
+    schedule_name: str | None = None
+
     priority: int
     status: TaskStatus
 

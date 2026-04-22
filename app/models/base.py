@@ -1,8 +1,7 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import DateTime, Integer, MetaData
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy.sql import func
 
 
 NAMING_CONVENTION = {
@@ -21,20 +20,24 @@ class Base(DeclarativeBase):
     metadata = metadata_obj
 
 
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 class BaseModelMixin:
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=False),
-        nullable=False,
-        server_default=func.now(),
-    )
 
 
 class TimestampMixin:
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=False),
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
         nullable=False,
-        server_default=func.now(),
-        onupdate=func.now(),
+        default=utc_now,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        onupdate=utc_now,
     )
     
