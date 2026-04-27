@@ -196,6 +196,25 @@ class WorkerService:
         if not config or config.max_concurrency is None:
             return 1
         return max(1, config.max_concurrency)
+    
+    def _get_mode_max_concurrency(self, runner, execution_mode: str | None) -> int:
+        if execution_mode == "foreground":
+            return 1
+
+        return self._get_runner_max_concurrency(runner)
+
+
+    def _count_active_for_runner_by_execution_mode(self, runner_id: int, execution_mode: str | None) -> int:
+        tasks = self.task_repository.list_active_for_runner(runner_id)
+
+        total = 0
+        for task in tasks:
+            _, task_execution_mode = self._resolve_task_bot_context(task)
+
+            if task_execution_mode == execution_mode:
+                total += 1
+
+        return total
 
     def _normalize_execution_mode(self, value) -> str | None:
         if value is None:
@@ -547,13 +566,19 @@ class WorkerService:
         if runner.status not in {RunnerStatus.ONLINE, RunnerStatus.BUSY}:
             raise ForbiddenException("Runner precisa estar ONLINE para consultar tasks.")
 
-        active_count = self.task_repository.count_active_for_runner(runner.id)
-        max_concurrency = self._get_runner_max_concurrency(runner)
+        requested_execution_mode = self._resolve_requested_execution_mode(payload)
+
+        active_count = self._count_active_for_runner_by_execution_mode(
+            runner.id,
+            requested_execution_mode,
+        )
+        max_concurrency = self._get_mode_max_concurrency(
+            runner,
+            requested_execution_mode,
+        )
 
         if active_count >= max_concurrency:
             return self._empty_next_task_response()
-
-        requested_execution_mode = self._resolve_requested_execution_mode(payload)
         candidates = self.task_repository.list_waiting_candidates_for_runner(runner.id)
 
         selected_task = None
@@ -609,11 +634,21 @@ class WorkerService:
         if runner.status not in {RunnerStatus.ONLINE, RunnerStatus.BUSY}:
             raise ForbiddenException("Runner precisa estar ONLINE para assumir tasks.")
 
-        active_count = self.task_repository.count_active_for_runner(runner.id)
-        max_concurrency = self._get_runner_max_concurrency(runner)
+        _, task_execution_mode = self._resolve_task_bot_context(task)
+
+        active_count = self._count_active_for_runner_by_execution_mode(
+            runner.id,
+            task_execution_mode,
+        )
+        max_concurrency = self._get_mode_max_concurrency(
+            runner,
+            task_execution_mode,
+        )
 
         if active_count >= max_concurrency:
-            raise ValidationException("Runner atingiu o limite de concorrência.")
+            raise ValidationException(
+                f"Runner atingiu o limite de concorrência para execution_mode={task_execution_mode}."
+            )
 
         if task.status != TaskStatus.WAITING:
             raise ValidationException("Somente tasks em WAITING podem ser assumidas pelo runner.")
@@ -845,4 +880,5 @@ class WorkerService:
             "message": "Telemetria registrada com sucesso.",
             "task_id": task.id,
         }
+    
     
