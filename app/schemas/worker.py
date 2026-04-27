@@ -1,5 +1,4 @@
 from datetime import datetime
-
 from pydantic import BaseModel, Field
 
 from app.domain.enums import ErrorCategory, RunnerStatus, TaskLogLevel, TaskLogSource, TaskStatus
@@ -58,7 +57,19 @@ class WorkerHeartbeatResponse(OrkaBaseSchema):
     running_tasks: int = 0
 
 
-# 🔥 ALTERAÇÃO AQUI
+class WorkerScreenshotUploadRequest(OrkaBaseSchema):
+    uuid: str
+    token: str
+    image_base64: str = Field(..., min_length=1)
+    content_type: str = Field(default="image/png", max_length=50)
+
+
+class WorkerScreenshotUploadResponse(OrkaBaseSchema):
+    message: str
+    runner_id: int
+    last_screenshot_at: datetime
+
+
 class WorkerTaskNextRequest(OrkaBaseSchema):
     uuid: str
     token: str

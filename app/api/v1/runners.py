@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, status, Response
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.exceptions import NotFoundException
 from app.schemas.runner import (
     RunnerConfigRead,
     RunnerConfigUpdate,
@@ -37,6 +38,29 @@ def get_runner(
 ):
     service = RunnerService(db)
     return service.get(runner_id)
+
+
+@router.get("/{runner_id}/screenshot")
+def get_runner_screenshot(
+    runner_id: int,
+    db: Session = Depends(get_db),
+):
+    service = RunnerService(db)
+    runner = service.repo.get_by_id(runner_id)
+
+    if not runner:
+        raise NotFoundException("Runner não encontrado.")
+
+    if not runner.last_screenshot_image:
+        raise NotFoundException("Screenshot do runner não encontrado.")
+
+    return Response(
+        content=runner.last_screenshot_image,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @router.post("/", response_model=RunnerRead, status_code=status.HTTP_201_CREATED)
@@ -84,6 +108,7 @@ def update_runner_config(
 ):
     service = RunnerService(db)
     return service.update_config(runner_id, payload)
+
 
 @router.get("/overview", response_model=RunnerOverviewListResponse)
 def list_runners_overview(

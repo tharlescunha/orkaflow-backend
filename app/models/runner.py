@@ -64,4 +64,10 @@ class Runner(Base, BaseModelMixin, TimestampMixin):
     tasks = relationship("Task", back_populates="runner")
     locks = relationship("Lock", back_populates="runner")
     automation_links = relationship("AutomationRunner", back_populates="runner")
+
+    status_history = relationship(
+        "RunnerStatusHistory",
+        back_populates="runner",
+        cascade="all, delete-orphan",
+    )
     

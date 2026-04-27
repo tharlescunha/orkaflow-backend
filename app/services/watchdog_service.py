@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.domain.enums import RunnerStatus, TaskStatus
 from app.models.runner import Runner
 from app.models.task import Task
+from app.models.runner_status_history import RunnerStatusHistory
 from app.repositories.lock_repository import LockRepository
 
 
@@ -13,6 +14,38 @@ class WatchdogService:
     def __init__(self, db: Session):
         self.db = db
         self.lock_repository = LockRepository(db)
+
+    def _add_runner_status_history_if_needed(
+        self,
+        runner: Runner,
+        new_status: RunnerStatus,
+        reason: str | None = None,
+    ):
+        """
+        Só adiciona histórico se o último status for diferente
+        """
+
+        last_status = (
+            self.db.execute(
+                select(RunnerStatusHistory)
+                .where(RunnerStatusHistory.runner_id == runner.id)
+                .order_by(RunnerStatusHistory.created_at.desc())
+                .limit(1)
+            )
+            .scalars()
+            .first()
+        )
+
+        if last_status and last_status.status == new_status.value:
+            return  # 🔥 já é o mesmo status → não grava
+
+        history = RunnerStatusHistory(
+            runner_id=runner.id,
+            status=new_status.value,
+            reason=reason,
+        )
+
+        self.db.add(history)
 
     def mark_offline_runners(self, stale_after_seconds: int = 60) -> int:
         threshold = datetime.now(UTC) - timedelta(seconds=stale_after_seconds)
@@ -31,6 +64,13 @@ class WatchdogService:
 
         total = 0
         for runner in runners:
+            # 🔥 antes de alterar, registra histórico (se necessário)
+            self._add_runner_status_history_if_needed(
+                runner=runner,
+                new_status=RunnerStatus.OFFLINE,
+                reason="heartbeat_timeout",
+            )
+
             runner.status = RunnerStatus.OFFLINE
             self.db.add(runner)
 

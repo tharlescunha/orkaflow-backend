@@ -1,5 +1,8 @@
+import base64
+import binascii
 from datetime import UTC, datetime
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import (
@@ -15,6 +18,11 @@ from app.core.security import (
     verify_runner_token,
 )
 from app.domain.enums import RunnerStatus, TaskStatus
+from app.models.automation import Automation
+from app.models.automation_runner import AutomationRunner
+from app.models.bot_version import BotVersion
+from app.models.runner_status_history import RunnerStatusHistory
+from app.repositories.bot_repository import BotRepository
 from app.repositories.credential_repository import CredentialRepository
 from app.repositories.runner_repository import RunnerRepository
 from app.repositories.task_error_repository import TaskErrorRepository
@@ -22,21 +30,16 @@ from app.repositories.task_log_repository import TaskLogRepository
 from app.repositories.task_repository import TaskRepository
 from app.repositories.task_telemetry_repository import TaskTelemetryRepository
 from app.repositories.worker_runtime_event_repository import WorkerRuntimeEventRepository
-
-from app.repositories.bot_repository import BotRepository
-from app.models.automation import Automation
-from app.models.automation_runner import AutomationRunner
-from app.models.bot_version import BotVersion
-
 from app.schemas.worker import (
     WorkerHeartbeatResponse,
+    WorkerRuntimeEventResponse,
+    WorkerScreenshotUploadResponse,
     WorkerSyncRequest,
     WorkerSyncResponse,
+    WorkerTaskActiveListResponse,
     WorkerTaskErrorResponse,
     WorkerTaskLogResponse,
-    WorkerTaskActiveListResponse,
     WorkerTaskReleaseStartupLocksResponse,
-    WorkerRuntimeEventResponse,
 )
 from app.services.lock_service import LockService
 
@@ -72,6 +75,58 @@ class WorkerService:
         self.task_telemetry_repository = TaskTelemetryRepository(db)
         self.lock_service = LockService(db)
         self.worker_runtime_event_repository = WorkerRuntimeEventRepository(db)
+
+    def _get_last_runner_status_history(self, runner_id: int) -> RunnerStatusHistory | None:
+        stmt = (
+            select(RunnerStatusHistory)
+            .where(RunnerStatusHistory.runner_id == runner_id)
+            .order_by(RunnerStatusHistory.created_at.desc(), RunnerStatusHistory.id.desc())
+            .limit(1)
+        )
+        return self.db.execute(stmt).scalars().first()
+
+    def _add_runner_status_history_if_needed(
+        self,
+        runner_id: int,
+        status: RunnerStatus,
+        reason: str | None = None,
+    ) -> None:
+        last_history = self._get_last_runner_status_history(runner_id)
+
+        status_value = status.value if hasattr(status, "value") else str(status)
+
+        if last_history and last_history.status == status_value:
+            return
+
+        history = RunnerStatusHistory(
+            runner_id=runner_id,
+            status=status_value,
+            reason=reason,
+        )
+        self.db.add(history)
+
+    def upload_runner_screenshot(self, payload) -> WorkerScreenshotUploadResponse:
+        runner = self._authenticate_runner(payload.uuid, payload.token)
+
+        try:
+            image_bytes = base64.b64decode(payload.image_base64, validate=True)
+        except (binascii.Error, ValueError):
+            raise ValidationException("Imagem inválida. Envie uma imagem em base64 válido.")
+
+        now = datetime.now(UTC)
+
+        runner.last_screenshot_image = image_bytes
+        runner.last_screenshot_at = now
+
+        self.db.add(runner)
+        self.db.commit()
+        self.db.refresh(runner)
+
+        return WorkerScreenshotUploadResponse(
+            message="Screenshot do runner atualizado com sucesso.",
+            runner_id=runner.id,
+            last_screenshot_at=runner.last_screenshot_at,
+        )
 
     def create_runtime_event(self, payload) -> WorkerRuntimeEventResponse:
         runner = self._authenticate_runner(payload.uuid, payload.token)
@@ -325,6 +380,13 @@ class WorkerService:
 
         runner = self.runner_repository.update(runner, **update_data)
 
+        self._add_runner_status_history_if_needed(
+            runner_id=runner.id,
+            status=RunnerStatus.ONLINE,
+            reason="sync",
+        )
+        self.db.commit()
+
         config = self.runner_repository.get_config(runner.id)
         polling_interval = (
             config.polling_interval
@@ -394,7 +456,11 @@ class WorkerService:
                     "storage_type": active_version.storage_type if active_version else None,
                     "artifact_path": active_version.artifact_path if active_version else None,
                     "checksum": active_version.checksum if active_version else None,
-                    "execution_mode": self._normalize_execution_mode(getattr(bot, "execution_mode", None).value if hasattr(getattr(bot, "execution_mode", None), "value") else getattr(bot, "execution_mode", None)),
+                    "execution_mode": self._normalize_execution_mode(
+                        getattr(bot, "execution_mode", None).value
+                        if hasattr(getattr(bot, "execution_mode", None), "value")
+                        else getattr(bot, "execution_mode", None)
+                    ),
                 }
             )
             added_bot_ids.add(bot.id)
@@ -660,16 +726,18 @@ class WorkerService:
 
         self._validate_task_runner_ownership(task, runner)
 
-        self.task_log_repository.create({
-            "task_id": task.id,
-            "level": payload.level,
-            "message": payload.message,
-            "source": payload.source,
-            "reference": payload.reference,
-            "error_type": payload.error_type,
-            "sequence_number": payload.sequence_number,
-            "event_code": payload.event_code,
-        })
+        self.task_log_repository.create(
+            {
+                "task_id": task.id,
+                "level": payload.level,
+                "message": payload.message,
+                "source": payload.source,
+                "reference": payload.reference,
+                "error_type": payload.error_type,
+                "sequence_number": payload.sequence_number,
+                "event_code": payload.event_code,
+            }
+        )
 
         self.db.commit()
 
@@ -684,16 +752,18 @@ class WorkerService:
 
         self._validate_task_runner_ownership(task, runner)
 
-        self.task_error_repository.create({
-            "task_id": task.id,
-            "error_type": payload.error_type,
-            "message": payload.message,
-            "stacktrace": payload.stacktrace,
-            "error_category": payload.error_category,
-            "is_retryable": payload.is_retryable,
-            "source": payload.source,
-            "code": payload.code,
-        })
+        self.task_error_repository.create(
+            {
+                "task_id": task.id,
+                "error_type": payload.error_type,
+                "message": payload.message,
+                "stacktrace": payload.stacktrace,
+                "error_category": payload.error_category,
+                "is_retryable": payload.is_retryable,
+                "source": payload.source,
+                "code": payload.code,
+            }
+        )
 
         self.db.commit()
 
@@ -775,3 +845,4 @@ class WorkerService:
             "message": "Telemetria registrada com sucesso.",
             "task_id": task.id,
         }
+    

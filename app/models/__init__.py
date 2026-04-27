@@ -21,6 +21,7 @@ from app.models.task_parameter import TaskParameter
 from app.models.task_telemetry import TaskTelemetry
 from app.models.user import User
 from app.models.worker_runtime_event import WorkerRuntimeEvent
+from app.models.runner_status_history import RunnerStatusHistory
 
 
 __all__ = [
@@ -48,4 +49,5 @@ __all__ = [
     "AuditLog",
     "TaskTelemetry",
     "WorkerRuntimeEvent",
+    "RunnerStatusHistory",
 ]
