@@ -341,6 +341,13 @@ class TaskService:
         if not automation.active:
             raise ValidationException("Não é permitido criar task para automação inativa.")
 
+        bot = automation.bot
+        if not bot:
+            raise ValidationException("Bot da automação não encontrado.")
+
+        if not bot.active:
+            raise ValidationException("Não é permitido criar task para bot inativo.")
+
         bot_version_id = payload.bot_version_id
         if bot_version_id is None:
             latest_bot_version = self.repository.get_latest_bot_version_for_bot(automation.bot_id)
@@ -379,7 +386,7 @@ class TaskService:
         if requested_start_at and requested_start_at.tzinfo is None:
             raise ValidationException("requested_start_at deve possuir timezone.")
 
-        timeout_seconds = payload.timeout_seconds or 3600
+        timeout_seconds = payload.timeout_seconds or bot.timeout_default or 3600
         now = datetime.now(UTC)
 
         status = TaskStatus.SCHEDULED if requested_start_at else TaskStatus.WAITING
@@ -552,4 +559,4 @@ class TaskService:
         task = self.repository.update(task, data)
         self.db.commit()
         return task
-    
+

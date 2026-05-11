@@ -15,13 +15,21 @@ class DispatchService:
     Papel dele no fluxo atual:
     - procurar tasks em WAITING sem runner definido
     - encontrar um runner ONLINE/ENABLED elegível para a automação
-    - respeitar concorrência do runner
     - pré-vincular a task ao runner
     - manter a task em WAITING
 
     Importante:
     Quem muda WAITING -> READY hoje é o WorkerService.claim_task().
     Então este service NÃO deve colocar a task em READY.
+
+    REGRA ATUAL:
+    - só despacha task para runner ONLINE e habilitado
+    - não despacha para runner OFFLINE
+    - não despacha para runner BUSY
+    - não despacha para runner MAINTENANCE
+    - não despacha para runner BLOCKED
+    - só despacha se o runner não tiver nenhuma task aberta vinculada
+    - task finalizada, cancelada, erro ou timeout não bloqueia novo despacho
     """
 
     def __init__(self, db: Session):
@@ -45,7 +53,10 @@ class DispatchService:
                 continue
 
             # Segurança extra para agendamento futuro
-            if task.requested_start_at is not None and task.requested_start_at > datetime.now(UTC):
+            if (
+                task.requested_start_at is not None
+                and task.requested_start_at > datetime.now(UTC)
+            ):
                 continue
 
             runner = self._find_best_runner_for_task(task)
@@ -60,6 +71,7 @@ class DispatchService:
                     "dispatch_attempts": (task.dispatch_attempts or 0) + 1,
                 },
             )
+
             dispatched += 1
 
         if dispatched:
@@ -68,7 +80,11 @@ class DispatchService:
         return dispatched
 
     def _find_best_runner_for_task(self, task):
-        links = self.automation_runner_repo.list_by_automation(self.db, task.automation_id)
+        links = self.automation_runner_repo.list_by_automation(
+            self.db,
+            task.automation_id,
+        )
+
         if not links:
             return None
 
@@ -78,44 +94,47 @@ class DispatchService:
             skip=0,
             limit=500,
             enabled=True,
-            status=RunnerStatus.ONLINE,
         )
 
-        candidates = [runner for runner in available_runners if runner.id in eligible_runner_ids]
-
-        best_runner = None
-        best_load = None
+        candidates = [
+            runner
+            for runner in available_runners
+            if runner.id in eligible_runner_ids
+        ]
 
         for runner in candidates:
             if not self._runner_can_receive_task(runner, task):
                 continue
 
-            current_load = self.task_repo.count_active_for_runner(runner.id)
+            return runner
 
-            if best_runner is None or current_load < best_load:
-                best_runner = runner
-                best_load = current_load
-
-        return best_runner
+        return None
 
     def _runner_can_receive_task(self, runner, task) -> bool:
-        if runner.status != RunnerStatus.ONLINE:
-            return False
-
         if not runner.enabled:
             return False
 
-        if not self.task_repo.automation_has_runner_link(task.automation_id, runner.id):
+        if runner.status != RunnerStatus.ONLINE:
             return False
 
-        config = self.runner_repo.get_config(runner.id)
-        max_concurrency = 1
+        if runner.status in (
+            RunnerStatus.OFFLINE,
+            RunnerStatus.BUSY,
+            RunnerStatus.MAINTENANCE,
+            RunnerStatus.BLOCKED,
+        ):
+            return False
 
-        if config and config.max_concurrency is not None:
-            max_concurrency = max(1, config.max_concurrency)
+        if not self.task_repo.automation_has_runner_link(
+            task.automation_id,
+            runner.id,
+        ):
+            return False
 
-        current_running = self.task_repo.count_active_for_runner(runner.id)
-        if current_running >= max_concurrency:
+        # Regra principal:
+        # runner só recebe nova task se não tiver nenhuma task aberta vinculada.
+        if self.task_repo.count_open_for_runner(runner.id) > 0:
             return False
 
         return True
+

@@ -257,7 +257,7 @@ class SchedulerEngineService:
             )
 
         return payload
-    
+
     def _create_task(
         self,
         schedule: Schedule,
@@ -297,6 +297,8 @@ class SchedulerEngineService:
             self.db.add(schedule)
             return False
 
+        timeout_seconds = bot.timeout_default or 3600
+
         task = self.task_repo.create(
             {
                 "automation_id": schedule.automation_id,
@@ -306,6 +308,7 @@ class SchedulerEngineService:
                 "execution_mode": ExecutionMode.SCHEDULED,
                 "requested_start_at": execution_time_utc,
                 "priority": automation.default_priority,
+                "timeout_seconds": timeout_seconds,
                 "created_at": now_utc,
                 "last_update_at": now_utc,
             }
@@ -456,4 +459,4 @@ class SchedulerEngineService:
         day = min(dt.day, last_day_of_target_month)
 
         return dt.replace(year=year, month=month, day=day)
-        
+

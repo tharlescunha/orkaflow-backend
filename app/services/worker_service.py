@@ -63,6 +63,13 @@ RUNNER_STARTUP_ACTIVE_STATUSES = {
     TaskStatus.STOP_REQUESTED,
 }
 
+RUNNER_OPEN_STATUSES = {
+    TaskStatus.WAITING,
+    TaskStatus.READY,
+    TaskStatus.RUNNING,
+    TaskStatus.STOP_REQUESTED,
+}
+
 
 class WorkerService:
     def __init__(self, db: Session):
@@ -104,6 +111,36 @@ class WorkerService:
             reason=reason,
         )
         self.db.add(history)
+
+    def _runner_has_open_task(self, runner_id: int) -> bool:
+        return self.task_repository.count_open_for_runner(runner_id) > 0
+
+    def _runner_has_other_open_task(self, runner_id: int, task_id: int) -> bool:
+        tasks, _ = self.task_repository.list_all(
+            skip=0,
+            limit=500,
+            statuses=list(RUNNER_OPEN_STATUSES),
+            runner_ids=[runner_id],
+        )
+
+        for task in tasks:
+            if task.id != task_id:
+                return True
+
+        return False
+
+    def _set_runner_status(self, runner, status: RunnerStatus, reason: str | None = None):
+        if runner.status == status:
+            return runner
+
+        runner.status = status
+        self.db.add(runner)
+        self._add_runner_status_history_if_needed(
+            runner_id=runner.id,
+            status=status,
+            reason=reason,
+        )
+        return runner
 
     def upload_runner_screenshot(self, payload) -> WorkerScreenshotUploadResponse:
         runner = self._authenticate_runner(payload.uuid, payload.token)
@@ -190,31 +227,6 @@ class WorkerService:
             "inactivity_timeout_seconds": None,
             "parameters": [],
         }
-
-    def _get_runner_max_concurrency(self, runner) -> int:
-        config = self.runner_repository.get_config(runner.id)
-        if not config or config.max_concurrency is None:
-            return 1
-        return max(1, config.max_concurrency)
-    
-    def _get_mode_max_concurrency(self, runner, execution_mode: str | None) -> int:
-        if execution_mode == "foreground":
-            return 1
-
-        return self._get_runner_max_concurrency(runner)
-
-
-    def _count_active_for_runner_by_execution_mode(self, runner_id: int, execution_mode: str | None) -> int:
-        tasks = self.task_repository.list_active_for_runner(runner_id)
-
-        total = 0
-        for task in tasks:
-            _, task_execution_mode = self._resolve_task_bot_context(task)
-
-            if task_execution_mode == execution_mode:
-                total += 1
-
-        return total
 
     def _normalize_execution_mode(self, value) -> str | None:
         if value is None:
@@ -345,7 +357,7 @@ class WorkerService:
             "enabled": runner.enabled,
             "token": plain_token,
             "polling_interval": config.polling_interval,
-            "max_concurrency": config.max_concurrency,
+            "max_concurrency": 1,
         }
 
     def authenticate(self, payload):
@@ -361,9 +373,9 @@ class WorkerService:
     def heartbeat(self, payload) -> WorkerHeartbeatResponse:
         runner = self._authenticate_runner(payload.uuid, payload.token)
 
-        max_concurrency = self._get_runner_max_concurrency(runner)
-
-        if payload.running_tasks >= max_concurrency and max_concurrency > 0:
+        if runner.status in {RunnerStatus.MAINTENANCE, RunnerStatus.BLOCKED}:
+            new_status = runner.status
+        elif payload.running_tasks > 0:
             new_status = RunnerStatus.BUSY
         else:
             new_status = RunnerStatus.ONLINE
@@ -388,8 +400,10 @@ class WorkerService:
 
         update_data = {
             "last_heartbeat": datetime.now(UTC),
-            "status": RunnerStatus.ONLINE,
         }
+
+        if runner.status not in {RunnerStatus.MAINTENANCE, RunnerStatus.BLOCKED}:
+            update_data["status"] = RunnerStatus.ONLINE
 
         if payload.host_name is not None:
             update_data["host_name"] = payload.host_name
@@ -401,7 +415,7 @@ class WorkerService:
 
         self._add_runner_status_history_if_needed(
             runner_id=runner.id,
-            status=RunnerStatus.ONLINE,
+            status=runner.status,
             reason="sync",
         )
         self.db.commit()
@@ -411,11 +425,6 @@ class WorkerService:
             config.polling_interval
             if config and config.polling_interval is not None
             else 10
-        )
-        max_concurrency = (
-            config.max_concurrency
-            if config and config.max_concurrency is not None
-            else 1
         )
 
         automation_links = (
@@ -489,7 +498,7 @@ class WorkerService:
             status=runner.status.value if hasattr(runner.status, "value") else str(runner.status),
             enabled=runner.enabled,
             polling_interval=polling_interval,
-            max_concurrency=max_concurrency,
+            max_concurrency=1,
             message="sync successful",
             bots=bot_payloads,
         )
@@ -550,6 +559,13 @@ class WorkerService:
 
         runner_locks_released = len(self.lock_service.release_runner_locks(runner.id))
 
+        if tasks_finalized == 0 and runner.status == RunnerStatus.BUSY:
+            self._set_runner_status(
+                runner,
+                RunnerStatus.ONLINE,
+                reason="startup_sem_tasks_ativas",
+            )
+
         self.db.commit()
 
         return WorkerTaskReleaseStartupLocksResponse(
@@ -563,22 +579,13 @@ class WorkerService:
     def get_next_task(self, payload):
         runner = self._authenticate_runner(payload.uuid, payload.token)
 
-        if runner.status not in {RunnerStatus.ONLINE, RunnerStatus.BUSY}:
-            raise ForbiddenException("Runner precisa estar ONLINE para consultar tasks.")
+        if runner.status != RunnerStatus.ONLINE:
+            return self._empty_next_task_response()
+
+        if self._runner_has_open_task(runner.id):
+            return self._empty_next_task_response()
 
         requested_execution_mode = self._resolve_requested_execution_mode(payload)
-
-        active_count = self._count_active_for_runner_by_execution_mode(
-            runner.id,
-            requested_execution_mode,
-        )
-        max_concurrency = self._get_mode_max_concurrency(
-            runner,
-            requested_execution_mode,
-        )
-
-        if active_count >= max_concurrency:
-            return self._empty_next_task_response()
         candidates = self.task_repository.list_waiting_candidates_for_runner(runner.id)
 
         selected_task = None
@@ -631,30 +638,17 @@ class WorkerService:
         if not task:
             raise NotFoundException("Task não encontrada.")
 
-        if runner.status not in {RunnerStatus.ONLINE, RunnerStatus.BUSY}:
+        if runner.status != RunnerStatus.ONLINE:
             raise ForbiddenException("Runner precisa estar ONLINE para assumir tasks.")
-
-        _, task_execution_mode = self._resolve_task_bot_context(task)
-
-        active_count = self._count_active_for_runner_by_execution_mode(
-            runner.id,
-            task_execution_mode,
-        )
-        max_concurrency = self._get_mode_max_concurrency(
-            runner,
-            task_execution_mode,
-        )
-
-        if active_count >= max_concurrency:
-            raise ValidationException(
-                f"Runner atingiu o limite de concorrência para execution_mode={task_execution_mode}."
-            )
 
         if task.status != TaskStatus.WAITING:
             raise ValidationException("Somente tasks em WAITING podem ser assumidas pelo runner.")
 
         if task.runner_id is not None and task.runner_id != runner.id:
             raise ValidationException("A task já está vinculada a outro runner.")
+
+        if self._runner_has_other_open_task(runner.id, task.id):
+            raise ValidationException("Runner já possui uma task aberta vinculada.")
 
         if not self.task_repository.automation_has_runner_link(task.automation_id, runner.id):
             raise ForbiddenException("Esta automação não está vinculada a este runner.")
@@ -672,6 +666,12 @@ class WorkerService:
                 "last_update_at": now,
                 "dispatch_attempts": (task.dispatch_attempts or 0) + 1,
             },
+        )
+
+        self._set_runner_status(
+            runner,
+            RunnerStatus.BUSY,
+            reason="task_claimed",
         )
 
         self.db.commit()
@@ -723,6 +723,22 @@ class WorkerService:
             update_data["finished_at"] = datetime.now(UTC)
 
         task = self.task_repository.update(task, update_data)
+
+        if payload.status in RUNNER_PROGRESS_STATUSES:
+            self._set_runner_status(
+                runner,
+                RunnerStatus.BUSY,
+                reason="task_progress",
+            )
+
+        if payload.status in RUNNER_FINALIZABLE_STATUSES:
+            self.lock_service.release_task_locks(task.id)
+            self._set_runner_status(
+                runner,
+                RunnerStatus.ONLINE,
+                reason="task_finalizada",
+            )
+
         self.db.commit()
         return task
 
@@ -751,6 +767,11 @@ class WorkerService:
         )
 
         self.lock_service.release_task_locks(task.id)
+        self._set_runner_status(
+            runner,
+            RunnerStatus.ONLINE,
+            reason="task_finalizada",
+        )
 
         self.db.commit()
         return task
@@ -787,6 +808,19 @@ class WorkerService:
 
         self._validate_task_runner_ownership(task, runner)
 
+        error_screenshot = None
+
+        if payload.error_screenshot_base64:
+            image_base64 = payload.error_screenshot_base64.strip()
+
+            if "," in image_base64:
+                image_base64 = image_base64.split(",", 1)[1]
+
+            try:
+                error_screenshot = base64.b64decode(image_base64, validate=True)
+            except (binascii.Error, ValueError):
+                raise ValidationException("Imagem de erro inválida. Envie uma imagem em base64 válido.")
+
         self.task_error_repository.create(
             {
                 "task_id": task.id,
@@ -797,6 +831,7 @@ class WorkerService:
                 "is_retryable": payload.is_retryable,
                 "source": payload.source,
                 "code": payload.code,
+                "error_screenshot": error_screenshot,
             }
         )
 
@@ -880,5 +915,4 @@ class WorkerService:
             "message": "Telemetria registrada com sucesso.",
             "task_id": task.id,
         }
-    
-    
+

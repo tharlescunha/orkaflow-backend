@@ -1,3 +1,4 @@
+import base64
 from fastapi import APIRouter, Depends, Query, status, Response
 from sqlalchemy.orm import Session
 
@@ -54,14 +55,24 @@ def get_runner_screenshot(
     if not runner.last_screenshot_image:
         raise NotFoundException("Screenshot do runner não encontrado.")
 
-    return Response(
-        content=runner.last_screenshot_image,
-        media_type="image/png",
-        headers={
-            "Cache-Control": "no-store",
-        },
-    )
+    image_data = runner.last_screenshot_image
 
+    if isinstance(image_data, memoryview):
+        image_bytes = image_data.tobytes()
+    elif isinstance(image_data, bytes):
+        image_bytes = image_data
+    elif isinstance(image_data, str):
+        if image_data.startswith("data:image"):
+            image_data = image_data.split(",", 1)[1]
+        image_bytes = base64.b64decode(image_data)
+    else:
+        raise NotFoundException("Formato da imagem inválido.")
+
+    return Response(
+        content=image_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "no-store"},
+    )
 
 @router.post("/", response_model=RunnerRead, status_code=status.HTTP_201_CREATED)
 def create_runner(

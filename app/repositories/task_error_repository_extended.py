@@ -1,5 +1,6 @@
 from collections.abc import Sequence
 from datetime import datetime
+import base64
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, joinedload
@@ -17,6 +18,12 @@ from app.models.user import User
 class TaskErrorRepositoryExtended:
     def __init__(self, db: Session):
         self.db = db
+
+    def _serialize_error_screenshot(self, error: TaskError) -> str | None:
+        if not error.error_screenshot:
+            return None
+
+        return base64.b64encode(error.error_screenshot).decode("utf-8")
 
     def _serialize_rich_error(self, error: TaskError) -> dict:
         task = error.task
@@ -43,6 +50,7 @@ class TaskErrorRepositoryExtended:
             "code": error.code,
             "created_at": error.created_at,
             "updated_at": None,
+            "error_screenshot_base64": self._serialize_error_screenshot(error),
 
             "task_status": task.status if task else None,
 
@@ -210,7 +218,11 @@ class TaskErrorRepositoryExtended:
                 )
             )
 
-        stmt = stmt.order_by(TaskError.created_at.desc(), TaskError.id.desc()).offset(skip).limit(limit)
+        stmt = (
+            stmt.order_by(TaskError.created_at.desc(), TaskError.id.desc())
+            .offset(skip)
+            .limit(limit)
+        )
 
         items = self.db.execute(stmt).scalars().all()
         total = self.db.execute(count_stmt).scalar_one()

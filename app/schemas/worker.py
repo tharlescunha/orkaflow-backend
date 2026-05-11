@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field
 
 from app.domain.enums import ErrorCategory, RunnerStatus, TaskLogLevel, TaskLogSource, TaskStatus
 from app.schemas.common import OrkaBaseSchema
+import base64
 
 
 class WorkerRegisterRequest(OrkaBaseSchema):
@@ -161,6 +162,9 @@ class WorkerTaskErrorCreate(OrkaBaseSchema):
     source: TaskLogSource = TaskLogSource.WORKER
     code: str | None = Field(default=None, max_length=80)
 
+    # Imagem do erro enviada pelo worker em base64
+    error_screenshot_base64: str | None = None
+
 
 class WorkerTaskErrorResponse(OrkaBaseSchema):
     message: str
@@ -284,4 +288,3 @@ class WorkerRuntimeEventResponse(OrkaBaseSchema):
     message: str
     event_id: int
     runner_id: int
-    

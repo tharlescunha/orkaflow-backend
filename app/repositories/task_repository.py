@@ -52,13 +52,13 @@ class TaskRepository:
         skip: int = 0,
         limit: int = 100,
         statuses: list[TaskStatus] | None = None,
-        status: TaskStatus | None = None,  # 🔥 NOVO
+        status: TaskStatus | None = None,
         automation_ids: list[int] | None = None,
         runner_ids: list[int] | None = None,
         created_by: int | None = None,
     ) -> tuple[Sequence[Task], int]:
 
-        # 🔥 compatibilidade com código antigo
+        # compatibilidade com código antigo
         if status and not statuses:
             statuses = [status]
 
@@ -188,6 +188,38 @@ class TaskRepository:
         )
         return int(self.db.execute(stmt).scalar_one())
 
+    def count_open_for_runner(self, runner_id: int) -> int:
+        """
+        Conta tasks abertas vinculadas ao runner.
+
+        Essa contagem é usada pelo dispatcher para impedir fila interna no runner.
+
+        Inclui WAITING porque o dispatcher pré-vincula a task ao runner
+        e ela continua WAITING até o WorkerService.claim_task().
+
+        Não inclui status finais:
+        - FINISHED
+        - ERROR
+        - TIMEOUT
+        - CANCELED
+        - FORCED_STOP
+        """
+
+        open_statuses = (
+            TaskStatus.WAITING,
+            TaskStatus.READY,
+            TaskStatus.RUNNING,
+            TaskStatus.STOP_REQUESTED,
+        )
+
+        stmt = (
+            select(func.count(Task.id))
+            .where(Task.runner_id == runner_id)
+            .where(Task.status.in_(open_statuses))
+        )
+
+        return int(self.db.execute(stmt).scalar_one() or 0)
+
     def list_active_for_runner(self, runner_id: int) -> Sequence[Task]:
         active_statuses = (
             TaskStatus.READY,
@@ -214,4 +246,4 @@ class TaskRepository:
             .order_by(Task.priority.desc(), Task.id.asc())
         )
         return self.db.execute(stmt).scalars().all()
-    
+

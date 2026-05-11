@@ -27,6 +27,7 @@ class TaskErrorRead(TaskErrorBase):
     id: int
     created_at: datetime
     updated_at: datetime | None = None
+    error_screenshot_base64: str | None = None
 
 
 class TaskErrorListItem(OrkaBaseSchema):
@@ -40,6 +41,7 @@ class TaskErrorListItem(OrkaBaseSchema):
     source: TaskLogSource | None = None
     code: str | None = None
     created_at: datetime
+    error_screenshot_base64: str | None = None
 
 
 class TaskErrorListResponse(OrkaBaseSchema):
@@ -58,6 +60,7 @@ class TaskErrorRichListItem(OrkaBaseSchema):
     source: TaskLogSource | None = None
     code: str | None = None
     created_at: datetime
+    error_screenshot_base64: str | None = None
 
     task_status: str | None = None
 

@@ -5,8 +5,8 @@ from sqlalchemy.orm import Session
 
 from app.domain.enums import RunnerStatus, TaskStatus
 from app.models.runner import Runner
-from app.models.task import Task
 from app.models.runner_status_history import RunnerStatusHistory
+from app.models.task import Task
 from app.repositories.lock_repository import LockRepository
 
 
@@ -37,7 +37,7 @@ class WatchdogService:
         )
 
         if last_status and last_status.status == new_status.value:
-            return  # 🔥 já é o mesmo status → não grava
+            return
 
         history = RunnerStatusHistory(
             runner_id=runner.id,
@@ -46,6 +46,70 @@ class WatchdogService:
         )
 
         self.db.add(history)
+
+    def _release_task_locks(self, task: Task, now: datetime):
+        """
+        Libera locks da task.
+
+        Importante:
+        - NÃO remove runner_id da task.
+        - runner_id precisa ficar para histórico, tela e auditoria.
+        """
+
+        self.lock_repository.release_by_task_id(task.id, now)
+
+    def _runner_has_open_tasks(self, runner_id: int) -> bool:
+        open_statuses = (
+            TaskStatus.WAITING,
+            TaskStatus.READY,
+            TaskStatus.RUNNING,
+            TaskStatus.STOP_REQUESTED,
+        )
+
+        stmt = (
+            select(func.count(Task.id))
+            .where(Task.runner_id == runner_id)
+            .where(Task.status.in_(open_statuses))
+        )
+
+        total = int(self.db.execute(stmt).scalar_one() or 0)
+        return total > 0
+
+    def _release_runner_if_possible(self, runner_id: int | None):
+        """
+        Libera runner BUSY para ONLINE se ele não tiver mais task aberta.
+
+        Não altera runner:
+        - OFFLINE
+        - MAINTENANCE
+        - BLOCKED
+        - ONLINE
+        """
+
+        if runner_id is None:
+            return
+
+        runner = self.db.execute(
+            select(Runner).where(Runner.id == runner_id)
+        ).scalars().first()
+
+        if not runner:
+            return
+
+        if runner.status != RunnerStatus.BUSY:
+            return
+
+        if self._runner_has_open_tasks(runner.id):
+            return
+
+        self._add_runner_status_history_if_needed(
+            runner=runner,
+            new_status=RunnerStatus.ONLINE,
+            reason="runner_liberado_sem_tasks_abertas",
+        )
+
+        runner.status = RunnerStatus.ONLINE
+        self.db.add(runner)
 
     def mark_offline_runners(self, stale_after_seconds: int = 60) -> int:
         threshold = datetime.now(UTC) - timedelta(seconds=stale_after_seconds)
@@ -64,7 +128,6 @@ class WatchdogService:
 
         total = 0
         for runner in runners:
-            # 🔥 antes de alterar, registra histórico (se necessário)
             self._add_runner_status_history_if_needed(
                 runner=runner,
                 new_status=RunnerStatus.OFFLINE,
@@ -97,16 +160,30 @@ class WatchdogService:
         return len(locks)
 
     def mark_timed_out_tasks(self) -> int:
+        """
+        Finaliza tasks que passaram do timeout configurado.
+
+        Regra:
+        - usa task.timeout_seconds
+        - se task.timeout_seconds não existir, usa 3600
+        - status vai para TIMEOUT
+        - stop_requested fica True para o worker parar se ainda estiver vivo
+        - locks da task são liberados
+        - runner BUSY volta para ONLINE se não tiver mais task aberta
+        """
+
         now = datetime.now(UTC)
 
         stmt = (
             select(Task)
             .where(
-                Task.status.in_([
-                    TaskStatus.READY,
-                    TaskStatus.RUNNING,
-                    TaskStatus.STOP_REQUESTED,
-                ])
+                Task.status.in_(
+                    [
+                        TaskStatus.READY,
+                        TaskStatus.RUNNING,
+                        TaskStatus.STOP_REQUESTED,
+                    ]
+                )
             )
             .where(Task.started_at.is_not(None))
         )
@@ -118,14 +195,20 @@ class WatchdogService:
             timeout_seconds = task.timeout_seconds or 3600
             deadline = task.started_at + timedelta(seconds=timeout_seconds)
 
-            if now >= deadline:
-                task.status = TaskStatus.TIMEOUT
-                task.finished_at = now
-                task.last_update_at = now
-                task.final_message = task.final_message or "Task finalizada por timeout."
-                self.db.add(task)
-                self.lock_repository.release_by_task_id(task.id, now)
-                total += 1
+            if now < deadline:
+                continue
+
+            task.status = TaskStatus.TIMEOUT
+            task.finished_at = now
+            task.last_update_at = now
+            task.stop_requested = True
+            task.final_message = task.final_message or "Task cancelada por timeout do bot."
+
+            self.db.add(task)
+            self._release_task_locks(task, now)
+            self._release_runner_if_possible(task.runner_id)
+
+            total += 1
 
         if total:
             self.db.commit()
@@ -139,11 +222,13 @@ class WatchdogService:
         stmt = (
             select(Task)
             .where(
-                Task.status.in_([
-                    TaskStatus.READY,
-                    TaskStatus.RUNNING,
-                    TaskStatus.STOP_REQUESTED,
-                ])
+                Task.status.in_(
+                    [
+                        TaskStatus.READY,
+                        TaskStatus.RUNNING,
+                        TaskStatus.STOP_REQUESTED,
+                    ]
+                )
             )
         )
 
@@ -173,9 +258,13 @@ class WatchdogService:
                 task.status = TaskStatus.ERROR
                 task.finished_at = now
                 task.last_update_at = now
+                task.stop_requested = True
                 task.final_message = task.final_message or "Task órfã recuperada pelo watchdog."
+
                 self.db.add(task)
-                self.lock_repository.release_by_task_id(task.id, now)
+                self._release_task_locks(task, now)
+                self._release_runner_if_possible(task.runner_id)
+
                 total += 1
 
         if total:
@@ -188,9 +277,10 @@ class WatchdogService:
 
         online_stmt = (
             select(func.count(Runner.id))
+            .where(Runner.enabled == True)
             .where(Runner.status.in_([RunnerStatus.ONLINE, RunnerStatus.BUSY]))
         )
-        online_count = int(self.db.execute(online_stmt).scalar_one())
+        online_count = int(self.db.execute(online_stmt).scalar_one() or 0)
 
         if online_count > 0:
             return 0
@@ -198,11 +288,13 @@ class WatchdogService:
         stmt = (
             select(Task)
             .where(
-                Task.status.in_([
-                    TaskStatus.READY,
-                    TaskStatus.RUNNING,
-                    TaskStatus.STOP_REQUESTED,
-                ])
+                Task.status.in_(
+                    [
+                        TaskStatus.READY,
+                        TaskStatus.RUNNING,
+                        TaskStatus.STOP_REQUESTED,
+                    ]
+                )
             )
         )
 
@@ -213,16 +305,19 @@ class WatchdogService:
             task.status = TaskStatus.ERROR
             task.finished_at = now
             task.last_update_at = now
+            task.stop_requested = True
             task.final_message = (
                 task.final_message
                 or "Task finalizada pelo watchdog: não existe worker online."
             )
+
             self.db.add(task)
-            self.lock_repository.release_by_task_id(task.id, now)
+            self._release_task_locks(task, now)
+            self._release_runner_if_possible(task.runner_id)
+
             total += 1
 
         if total:
             self.db.commit()
 
         return total
-    

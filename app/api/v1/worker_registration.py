@@ -10,7 +10,13 @@ from app.services.worker_service import WorkerService
 router = APIRouter(prefix="/worker/registration", tags=["Worker Registration"])
 
 
-@router.post("/", response_model=WorkerRegisterResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=WorkerRegisterResponse)
 def register_worker(payload: WorkerRegisterRequest, db: Session = Depends(get_db)):
     service = WorkerService(db)
+
+    existing = service.get_by_uuid(payload.uuid)
+
+    if existing:
+        return service.update_runner(existing.id, payload)
+
     return service.register_runner(payload)
