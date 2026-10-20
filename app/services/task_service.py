@@ -58,25 +58,11 @@ class TaskService:
     def _release_after_final(self, task) -> None:
         """Libera os locks da task na hora e recalcula o estado do runner (derivado das tasks).
 
-        Não bloqueia nem pausa o runner (exceto o bloqueio explícito de parada forçada,
-        feito em force_stop, recurso de junho/2026).
+        Não bloqueia nem pausa o runner: o runner só deixa de receber tasks se o
+        administrador o desativar.
         """
         self.lock_service.release_task_locks(task.id)
         self.capacity.refresh_runner_status_by_id(task.runner_id, reason="task_finalizada")
-
-    def _block_runner(self, runner_id: int | None, reason: str):
-        """Bloqueia o runner após parada forçada manual (recurso de junho/2026).
-
-        Só é usado por force_stop (ação do usuário); nenhuma rotina automática bloqueia runner.
-        """
-        if runner_id is None:
-            return
-
-        runner = self.runner_repository.get_by_id(runner_id)
-        if not runner or runner.status == RunnerStatus.MAINTENANCE:
-            return
-
-        self.capacity.set_runner_status(runner, RunnerStatus.BLOCKED, reason)
 
     def _get_automation_name(self, task) -> str | None:
         if not getattr(task, "automation", None):
@@ -625,7 +611,6 @@ class TaskService:
             },
         )
         self._release_after_final(task)
-        self._block_runner(runner_id, reason="task_parada_forcada_requer_validacao")
         self.db.commit()
         return task
 

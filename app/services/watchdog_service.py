@@ -60,7 +60,7 @@ class WatchdogService:
     def _release_runner_if_possible(self, runner_id: int | None):
         """Recalcula BUSY/ONLINE a partir das tasks em execução do banco.
 
-        Não altera OFFLINE, MAINTENANCE nem BLOCKED.
+        Não altera OFFLINE nem MAINTENANCE.
         """
         self.capacity.refresh_runner_status_by_id(runner_id, reason="runner_liberado_sem_tasks_abertas")
 
@@ -348,7 +348,7 @@ class WatchdogService:
             .where(Task.runner_id.is_not(None))
             .where(
                 (Runner.enabled == False)
-                | (Runner.status.in_([RunnerStatus.OFFLINE, RunnerStatus.MAINTENANCE, RunnerStatus.BLOCKED]))
+                | (Runner.status.in_([RunnerStatus.OFFLINE, RunnerStatus.MAINTENANCE]))
             )
         )
 
@@ -364,7 +364,6 @@ class WatchdogService:
                 state = {
                     RunnerStatus.OFFLINE: "offline",
                     RunnerStatus.MAINTENANCE: "em manutenção",
-                    RunnerStatus.BLOCKED: "bloqueado",
                 }.get(runner.status, "indisponível")
 
             task.runner_id = None

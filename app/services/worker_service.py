@@ -115,7 +115,9 @@ class WorkerService:
         """
         runner.last_heartbeat = datetime.now(UTC)
         self.db.add(runner)
-        if runner.enabled and runner.status == RunnerStatus.OFFLINE:
+        # BLOCKED não existe mais como decisão do sistema (só sobrou em dados antigos
+        # de paradas forçadas de versões anteriores): o worker vivo volta a ficar ONLINE.
+        if runner.enabled and runner.status in (RunnerStatus.OFFLINE, RunnerStatus.BLOCKED):
             self._set_runner_status(runner, RunnerStatus.ONLINE, reason)
 
     def _touch_task(self, task, *, renew_lock: bool = True) -> None:
@@ -388,9 +390,9 @@ class WorkerService:
                 if not clash:
                     update_data["name"] = new_name
 
-            # Manutenção/bloqueio são decisões do usuário: preserva. Demais voltam OFFLINE
+            # Manutenção é decisão do administrador: preserva. Demais voltam OFFLINE
             # até o primeiro sync/heartbeat.
-            if existing.status not in (RunnerStatus.MAINTENANCE, RunnerStatus.BLOCKED):
+            if existing.status != RunnerStatus.MAINTENANCE:
                 update_data["status"] = RunnerStatus.OFFLINE
 
             runner = self.runner_repository.update(existing, **update_data)
@@ -652,7 +654,7 @@ class WorkerService:
         self._refresh_runner_status(runner, reason="next_task")
         self.db.commit()
 
-        if runner.status in (RunnerStatus.MAINTENANCE, RunnerStatus.BLOCKED, RunnerStatus.OFFLINE):
+        if runner.status in (RunnerStatus.MAINTENANCE, RunnerStatus.OFFLINE):
             return self._empty_next_task_response()
 
         requested = self._resolve_requested_execution_mode(payload)
@@ -700,9 +702,9 @@ class WorkerService:
         self._mark_alive(runner, reason="claim_task")
         self.db.commit()
 
-        if runner.status in (RunnerStatus.MAINTENANCE, RunnerStatus.BLOCKED):
+        if runner.status == RunnerStatus.MAINTENANCE:
             raise ValidationException(
-                "Runner em manutenção/bloqueado: não pode assumir novas tasks no momento."
+                "Runner em manutenção (definido pelo administrador): não pode assumir novas tasks."
             )
 
         # Serializa os claims do mesmo runner (lock de linha até o commit),

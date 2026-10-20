@@ -156,11 +156,12 @@ class CapacityService:
     def refresh_runner_status(self, runner, reason: str = "status_derivado_das_tasks") -> RunnerStatus:
         """BUSY se há task aberta (READY/RUNNING/STOP_REQUESTED), senão ONLINE.
 
-        Não altera OFFLINE, MAINTENANCE nem BLOCKED.
+        Não altera OFFLINE nem MAINTENANCE. BLOCKED (herdado de paradas forçadas antigas)
+        é tratado como ONLINE/BUSY: o sistema não bloqueia runner.
         """
         if runner is None:
             return RunnerStatus.OFFLINE
-        if runner.status not in (RunnerStatus.ONLINE, RunnerStatus.BUSY):
+        if runner.status not in (RunnerStatus.ONLINE, RunnerStatus.BUSY, RunnerStatus.BLOCKED):
             return runner.status
 
         self.db.flush()
