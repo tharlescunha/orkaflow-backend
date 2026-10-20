@@ -10,7 +10,6 @@ DOWNLOADS_DIR = BASE_DIR / "static" / "downloads"
 
 ALLOWED_FILES = {
     "nssm.exe": DOWNLOADS_DIR / "nssm.exe",
-    "orkaflow-worker.exe": DOWNLOADS_DIR / "orkaflow-worker.exe",
 }
 
 
