@@ -1,3 +1,7 @@
+import re
+import time
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,10 +16,21 @@ from app.services.permission_service import PermissionService
 
 settings = get_settings()
 
+
+# ==========================================================
+# LIFESPAN (startup/shutdown)
+# ==========================================================
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    seed_default_permissions()
+    yield
+
+
 app = FastAPI(
     title=settings.app_name,
     version="1.0.0",
     debug=settings.app_debug,
+    lifespan=lifespan,
 )
 
 # ==========================================================
@@ -48,23 +63,36 @@ def seed_default_permissions() -> None:
 
 
 # ==========================================================
-# STARTUP
+# MIDDLEWARE (access log)
 # ==========================================================
-@app.on_event("startup")
-def on_startup():
-    seed_default_permissions()
+# Endpoints de alta frequência (workers/health): sem linha por request em INFO;
+# só DEBUG em sucesso e WARNING/ERROR para status >= 400.
+_HIGH_FREQUENCY_RE = re.compile(
+    r"/(health|worker/heartbeat|worker/tasks/next|worker/screenshot|worker/tasks/[^/]+/logs)/?$"
+)
 
 
-# ==========================================================
-# MIDDLEWARE
-# ==========================================================
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
-    logger.info(f"HTTP {request.method} {request.url.path}")
-    response = await call_next(request)
-    logger.info(
-        f"HTTP {request.method} {request.url.path} -> {response.status_code}"
-    )
+    path = request.url.path
+    quiet = bool(_HIGH_FREQUENCY_RE.search(path))
+    started = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        logger.exception(f"HTTP {request.method} {path} -> exceção não tratada")
+        raise
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    msg = f"HTTP {request.method} {path} -> {response.status_code} ({elapsed_ms:.0f}ms)"
+
+    if response.status_code >= 500:
+        logger.error(msg)
+    elif response.status_code >= 400:
+        logger.warning(msg)
+    elif quiet:
+        logger.debug(msg)
+    else:
+        logger.info(msg)
     return response
 
 

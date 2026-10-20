@@ -1,3 +1,4 @@
+from typing import Any
 from datetime import datetime
 from pydantic import BaseModel, Field
 
@@ -144,8 +145,9 @@ class WorkerTaskFinishRequest(OrkaBaseSchema):
     status: TaskStatus
     final_message: str | None = None
     result_json: str | None = None
-    items_processed: int = 0
-    items_failed: int = 0
+    # None = "não informado": não sobrescreve os contadores já registrados na task.
+    items_processed: int | None = None
+    items_failed: int | None = None
 
 
 class WorkerTaskLogCreate(OrkaBaseSchema):
@@ -283,19 +285,22 @@ class WorkerRuntimeEventCreate(OrkaBaseSchema):
     uuid: str
     token: str
 
-    event_type: str = Field(..., max_length=100)
+    # Limites não são validados aqui (viram 422 e o evento se perderia):
+    # o service trunca event_type/reason e normaliza execution_mode.
+    event_type: str
 
+    # task_id/automation_id/bot_id são opcionais (ex.: sync_failed, bot_install_failed).
     task_id: int | None = None
     automation_id: int | None = None
     bot_id: int | None = None
 
-    execution_mode: str | None = Field(
-        default=None,
-        pattern="^(background|foreground)$",
-    )
+    execution_mode: str | None = None
 
-    reason: str | None = Field(default=None, max_length=100)
+    reason: str | None = None
     message: str | None = None
+
+    # Dados livres adicionais (persistidos em worker_runtime_events.extra_json).
+    extra: Any = None
 
 
 class WorkerRuntimeEventResponse(OrkaBaseSchema):

@@ -1,107 +1,111 @@
-import logging
-import threading
-import time
-import traceback
-from collections.abc import Callable
-from dataclasses import dataclass, field
+# app/workers/main.py
+"""ENTRYPOINT ÚNICO dos workers de fundo:  ``python -m app.workers.main``
 
-from app.workers.scheduler_runtime_main import run_scheduler_runtime
-from app.workers.watchdog_main import run_watchdog
-from app.workers.dispatcher_main import run_dispatcher
-from app.workers.scheduler_engine_main import run_scheduler_engine
+Sobe 4 threads (scheduler_runtime, watchdog, scheduler_engine, dispatcher) e as
+SUPERVISIONA: se alguma morrer, é reiniciada (com log e contador). Cada loop grava
+heartbeat em ``runtime/heartbeats/*.json``, lido por ``GET /health`` na API.
 
-logger = logging.getLogger("workers.main")
+Não execute outros entrypoints (scheduler_main, dispatcher_main, ...) em paralelo:
+duplicariam os serviços. Recomenda-se ``PYTHONUNBUFFERED=1`` no serviço systemd.
+"""
+import os
 
-WORKER_MONITOR_INTERVAL_SECONDS = 5
-WORKER_RESTART_DELAY_BASE_SECONDS = 3
-WORKER_RESTART_DELAY_MAX_SECONDS = 60
+os.environ.setdefault("ORKAFLOW_LOG_NAME", "workers")  # antes de importar app.core.logging
 
+import logging  # noqa: E402
+import signal  # noqa: E402
+import threading  # noqa: E402
+import time  # noqa: E402
+from datetime import datetime, timezone  # noqa: E402
 
-@dataclass(frozen=True)
-class WorkerSpec:
-    name: str
-    target: Callable[[], None]
+from app.core.logging import logger as _root_logger  # noqa: E402,F401  (configura handlers)
+from app.services.system_heartbeat_service import (  # noqa: E402
+    SUPERVISOR_NAME,
+    heartbeat_dir,
+    write_json_atomic,
+)
+from app.workers.dispatcher_main import run_dispatcher  # noqa: E402
+from app.workers.scheduler_engine_main import run_scheduler_engine  # noqa: E402
+from app.workers.scheduler_runtime_main import run_scheduler_runtime  # noqa: E402
+from app.workers.watchdog_main import run_watchdog  # noqa: E402
 
+logger = logging.getLogger("orkaflow.workers.main")
 
-@dataclass
-class WorkerState:
-    restart_count: int = 0
-    last_crash_at: float = field(default_factory=lambda: 0.0)
-
-
-def _restart_delay(state: WorkerState) -> float:
-    """Backoff exponencial no restart: 3s, 6s, 12s ... até 60s."""
-    delay = min(
-        WORKER_RESTART_DELAY_BASE_SECONDS * (2 ** min(state.restart_count, 8)),
-        WORKER_RESTART_DELAY_MAX_SECONDS,
-    )
-    return delay
+SUPERVISE_INTERVAL_SECONDS = 2
+MIN_RESTART_DELAY_SECONDS = 5
 
 
-def run_worker_with_guard(spec: WorkerSpec, state: WorkerState):
-    try:
-        spec.target()
-        logger.warning("[SYSTEM] %s finalizou inesperadamente (sem exceção).", spec.name)
-    except Exception:
-        logger.error(
-            "[SYSTEM] %s caiu com exceção:\n%s",
-            spec.name,
-            traceback.format_exc(),
-        )
-    finally:
-        state.restart_count += 1
-        state.last_crash_at = time.monotonic()
-
-
-def start_thread(spec: WorkerSpec, state: WorkerState) -> threading.Thread:
+def _spawn(target, name: str, stop_event: threading.Event) -> threading.Thread:
     thread = threading.Thread(
-        target=run_worker_with_guard,
-        args=(spec, state),
-        name=spec.name,
-        daemon=False,
+        target=target, kwargs={"stop_event": stop_event}, name=name, daemon=True
     )
     thread.start()
-    logger.info("[SYSTEM] %s iniciado (restart #%s).", spec.name, state.restart_count)
     return thread
 
 
 def run_all_workers():
-    specs = [
-        WorkerSpec("scheduler_runtime", run_scheduler_runtime),
-        WorkerSpec("watchdog", run_watchdog),
-        WorkerSpec("scheduler_engine", run_scheduler_engine),
-        WorkerSpec("dispatcher", run_dispatcher),
-    ]
+    stop_event = threading.Event()
 
-    states = {spec.name: WorkerState() for spec in specs}
+    def _request_stop(signum, _frame):
+        logger.info("Sinal %s recebido; encerrando workers", signum)
+        stop_event.set()
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            signal.signal(sig, _request_stop)
+        except (ValueError, OSError):
+            pass
+
+    targets = {
+        "scheduler_runtime": run_scheduler_runtime,
+        "watchdog": run_watchdog,
+        "scheduler_engine": run_scheduler_engine,
+        "dispatcher": run_dispatcher,
+    }
+    started_at = datetime.now(timezone.utc).isoformat()
     threads: dict[str, threading.Thread] = {}
+    restarts = {name: 0 for name in targets}
+    last_restart: dict[str, float] = {}
 
-    for spec in specs:
-        threads[spec.name] = start_thread(spec, states[spec.name])
+    for name, target in targets.items():
+        threads[name] = _spawn(target, name, stop_event)
+        logger.info("%s iniciado", name)
+    logger.info("Todos os workers iniciados (pid=%s)", os.getpid())
 
-    logger.info("[SYSTEM] Todos os workers iniciados.")
-
-    while True:
-        time.sleep(WORKER_MONITOR_INTERVAL_SECONDS)
-
-        for spec in specs:
-            thread = threads.get(spec.name)
-            if thread and thread.is_alive():
+    while not stop_event.is_set():
+        for name, thread in list(threads.items()):
+            if thread.is_alive():
                 continue
+            since = time.monotonic() - last_restart.get(name, -MIN_RESTART_DELAY_SECONDS)
+            if since < MIN_RESTART_DELAY_SECONDS:
+                continue
+            restarts[name] += 1
+            last_restart[name] = time.monotonic()
+            logger.error("Thread %s morreu; reiniciando (reinício nº %s)", name, restarts[name])
+            threads[name] = _spawn(targets[name], name, stop_event)
 
-            state = states[spec.name]
-            delay = _restart_delay(state)
+        write_json_atomic(
+            SUPERVISOR_NAME,
+            {
+                "pid": os.getpid(),
+                "started_at": started_at,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "restarts": restarts,
+                "threads_alive": {n: t.is_alive() for n, t in threads.items()},
+            },
+        )
+        stop_event.wait(SUPERVISE_INTERVAL_SECONDS)
 
-            logger.warning(
-                "[SYSTEM] %s parado (crash #%s) — reiniciando em %.0fs.",
-                spec.name,
-                state.restart_count,
-                delay,
-            )
-            time.sleep(delay)
-            threads[spec.name] = start_thread(spec, state)
+    for thread in threads.values():
+        thread.join(timeout=10)
+    # Parada limpa: remove heartbeats para o /health reportar "unknown" (e não 503 por stale).
+    for name in list(targets) + [SUPERVISOR_NAME]:
+        try:
+            (heartbeat_dir() / f"{name}.json").unlink()
+        except OSError:
+            pass
+    logger.info("Workers encerrados")
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
     run_all_workers()

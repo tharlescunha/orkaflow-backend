@@ -70,6 +70,9 @@ class ScheduleResponse(ScheduleBase):
     last_run_at: Optional[datetime] = None
     next_run_at: Optional[datetime] = None
     misfire_policy: Optional[str] = None
+    last_error: Optional[str] = None
+    last_skipped_reason: Optional[str] = None
+    last_skipped_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 

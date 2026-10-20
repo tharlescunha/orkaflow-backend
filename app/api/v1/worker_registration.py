@@ -13,4 +13,6 @@ router = APIRouter(prefix="/worker/registration", tags=["Worker Registration"])
 @router.post("/", response_model=WorkerRegisterResponse)
 def register_worker(payload: WorkerRegisterRequest, db: Session = Depends(get_db)):
     service = WorkerService(db)
+
+    # Upsert: procura por uuid/nome; atualiza se existir, senão cria.
     return service.register_runner(payload)

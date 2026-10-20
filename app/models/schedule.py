@@ -51,5 +51,11 @@ class Schedule(Base, BaseModelMixin, TimestampMixin):
     misfire_policy: Mapped[str | None] = mapped_column(String(50), nullable=True)
     use_default_runtime_parameters: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
+    # Último erro transitório do engine e último motivo de execução descartada.
+    # O schedule nunca vai para ERROR por causa disso: continua ACTIVE.
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_skipped_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_skipped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     automation = relationship("Automation", back_populates="schedules")
     tasks = relationship("Task", back_populates="schedule")

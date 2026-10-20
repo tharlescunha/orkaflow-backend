@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, and_, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.domain.enums import TaskStatus
@@ -11,6 +11,7 @@ from app.models.automation_exclusive_group import (
     AutomationExclusiveGroupMember,
 )
 from app.models.automation_runner import AutomationRunner
+from app.models.bot import Bot
 from app.models.bot_version import BotVersion
 from app.models.lock import Lock
 from app.models.runner import Runner
@@ -168,6 +169,20 @@ class TaskRepository:
         return self.db.execute(stmt).scalars().first()
 
     def get_latest_bot_version_for_bot(self, bot_id: int) -> BotVersion | None:
+        """Versão que deve ser usada pelo bot: a ativa mais recente; senão a última criada.
+
+        Usada tanto na criação de tasks quanto no sync do worker (mesma versão).
+        """
+        active_stmt = (
+            select(BotVersion)
+            .where(BotVersion.bot_id == bot_id)
+            .where(BotVersion.is_active == True)
+            .order_by(BotVersion.id.desc())
+        )
+        active = self.db.execute(active_stmt).scalars().first()
+        if active:
+            return active
+
         stmt = (
             select(BotVersion)
             .where(BotVersion.bot_id == bot_id)
@@ -346,15 +361,47 @@ class TaskRepository:
         )
         return self.db.execute(stmt).scalars().all()
 
-    def list_waiting_candidates_for_runner(self, runner_id: int) -> Sequence[Task]:
+    def list_claim_candidates(
+        self,
+        runner_id: int,
+        execution_mode: str | None = None,
+        *,
+        limit: int = 25,
+    ):
+        """Candidatos WAITING que o runner pode assumir, já filtrados no SQL.
+
+        Retorna linhas (Task, bot_id, bot_execution_mode) ordenadas por
+        priority DESC, id ASC. Não carrega relacionamentos (só colunas da task).
+        Filtra: status WAITING, sem runner ou vinculada a este runner, janela de
+        requested_start_at, automação vinculada ao runner, Automation/Bot ativos e modo.
+        """
         now = datetime.now(UTC)
 
         stmt = (
-            self._detail_query()
+            select(Task, Bot.id, Bot.execution_mode)
+            .join(BotVersion, BotVersion.id == Task.bot_version_id)
+            .join(Bot, Bot.id == BotVersion.bot_id)
+            .join(Automation, Automation.id == Task.automation_id)
+            .join(
+                AutomationRunner,
+                and_(
+                    AutomationRunner.automation_id == Task.automation_id,
+                    AutomationRunner.runner_id == runner_id,
+                ),
+            )
             .where(Task.status == TaskStatus.WAITING)
             .where((Task.runner_id.is_(None)) | (Task.runner_id == runner_id))
             .where((Task.requested_start_at.is_(None)) | (Task.requested_start_at <= now))
+            .where(Automation.active == True)
+            .where(Bot.active == True)
             .order_by(Task.priority.desc(), Task.id.asc())
+            .limit(limit)
         )
-        return self.db.execute(stmt).scalars().all()
 
+        fg = func.lower(func.coalesce(Bot.execution_mode, "")) == "foreground"
+        if execution_mode == "foreground":
+            stmt = stmt.where(fg)
+        elif execution_mode == "background":
+            stmt = stmt.where(~fg)
+
+        return list(self.db.execute(stmt).all())

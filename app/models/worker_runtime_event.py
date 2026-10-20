@@ -56,6 +56,12 @@ class WorkerRuntimeEvent(Base, BaseModelMixin, TimestampMixin):
         nullable=True,
     )
 
+    # JSON serializado com dados extras do evento (livre).
+    extra_json: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
     runner = relationship("Runner")
     task = relationship("Task")
     automation = relationship("Automation")

@@ -297,23 +297,32 @@ class RunnerRepository:
         status=None,
         automation_id: int | None = None,
     ) -> int:
-        tasks = self.list_recent_tasks(
-            runner_id=runner_id,
-            limit=100000,
-            date_from=date_from,
-            date_to=date_to,
-            status=status,
-            automation_id=automation_id,
+        # Só colunas necessárias (sem hidratar Task + automation de até 100k linhas).
+        stmt = (
+            select(Task.started_at, Task.finished_at, Task.status)
+            .where(Task.runner_id == runner_id)
+            .where(Task.started_at.is_not(None))
         )
+
+        if date_from is not None:
+            stmt = stmt.where(Task.created_at >= date_from)
+
+        if date_to is not None:
+            stmt = stmt.where(Task.created_at <= date_to)
+
+        if status is not None:
+            stmt = stmt.where(Task.status == status)
+
+        if automation_id is not None:
+            stmt = stmt.where(Task.automation_id == automation_id)
 
         now = datetime.now(UTC)
         total = 0
 
-        for task in tasks:
-            if task.started_at and task.finished_at:
-                total += int((task.finished_at - task.started_at).total_seconds())
-            elif task.started_at and task.status == TaskStatus.RUNNING:
-                total += int((now - task.started_at).total_seconds())
+        for started_at, finished_at, task_status in self.db.execute(stmt).all():
+            if started_at and finished_at:
+                total += int((finished_at - started_at).total_seconds())
+            elif started_at and task_status == TaskStatus.RUNNING:
+                total += int((now - started_at).total_seconds())
 
         return total
-    

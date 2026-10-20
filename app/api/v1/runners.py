@@ -32,6 +32,32 @@ def list_runners(
     return service.list(skip=skip, limit=limit, enabled=enabled, status=status_filter)
 
 
+# Rotas estáticas ANTES das parametrizadas (/{runner_id}), senão /overview dá 422.
+@router.get("/overview", response_model=RunnerOverviewListResponse)
+def list_runners_overview(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    enabled: bool | None = Query(None),
+    status_filter: str | None = Query(None, alias="status"),
+    date_from: datetime | None = Query(None),
+    date_to: datetime | None = Query(None),
+    task_status: TaskStatus | None = Query(None, alias="task_status"),
+    automation_id: int | None = Query(None),
+    db: Session = Depends(get_db),
+):
+    service = RunnerService(db)
+    return service.list_overview(
+        skip=skip,
+        limit=limit,
+        enabled=enabled,
+        status=status_filter,
+        date_from=date_from,
+        date_to=date_to,
+        task_status=task_status,
+        automation_id=automation_id,
+    )
+
+
 @router.get("/{runner_id}", response_model=RunnerRead)
 def get_runner(
     runner_id: int,
@@ -119,31 +145,6 @@ def update_runner_config(
 ):
     service = RunnerService(db)
     return service.update_config(runner_id, payload)
-
-
-@router.get("/overview", response_model=RunnerOverviewListResponse)
-def list_runners_overview(
-    skip: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=500),
-    enabled: bool | None = Query(None),
-    status_filter: str | None = Query(None, alias="status"),
-    date_from: datetime | None = Query(None),
-    date_to: datetime | None = Query(None),
-    task_status: TaskStatus | None = Query(None, alias="task_status"),
-    automation_id: int | None = Query(None),
-    db: Session = Depends(get_db),
-):
-    service = RunnerService(db)
-    return service.list_overview(
-        skip=skip,
-        limit=limit,
-        enabled=enabled,
-        status=status_filter,
-        date_from=date_from,
-        date_to=date_to,
-        task_status=task_status,
-        automation_id=automation_id,
-    )
 
 
 @router.get("/{runner_id}/overview", response_model=RunnerOverviewResponse)

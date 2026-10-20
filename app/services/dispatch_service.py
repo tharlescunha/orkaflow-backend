@@ -1,155 +1,216 @@
+import logging
+from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
-from app.domain.enums import RunnerStatus, TaskStatus
+from app.domain.enums import RunnerStatus, TaskLogLevel, TaskLogSource, TaskStatus
+from app.models.automation import Automation
+from app.models.automation_runner import AutomationRunner
+from app.models.bot import Bot
+from app.models.bot_version import BotVersion
 from app.models.runner import Runner
 from app.models.task import Task
-from app.repositories.automation_runner_repository import AutomationRunnerRepository
-from app.repositories.runner_repository import RunnerRepository
 from app.repositories.task_repository import TaskRepository
+from app.services.capacity_service import (
+    CapacityService,
+    normalize_host,
+    runner_max_concurrency,
+)
+from app.services.task_events import add_task_log, add_task_log_once
+from app.services.task_rules import (
+    EXECUTING_STATUSES,
+    MODE_FOREGROUND,
+    normalize_mode,
+)
 
+logger = logging.getLogger(__name__)
 
-DISPATCH_BATCH_LIMIT = 500
+NO_RUNNER_LOG_WINDOW = timedelta(hours=1)
+# Heartbeat mais antigo que isso: runner não recebe novas pré-vinculações (junho/2026).
 DISPATCH_RUNNER_HEARTBEAT_MAX_AGE_SECONDS = 150
 
 
 class DispatchService:
     """
-    Distribui tasks WAITING para runners elegiveis.
+    Dispatcher: pré-vincula tasks WAITING sem runner ao runner elegível de MENOR carga.
 
-    O dispatcher apenas pre-vincula runner_id. O worker ainda precisa chamar
-    claim_task para transformar WAITING em READY de forma transacional.
+    - ordena por priority DESC, id ASC; só tasks sem runner_id
+    - respeita Automation.active, Bot.active e o execution_mode do bot
+    - capacidade por modo (BACKGROUND até max_concurrency 1..5; FOREGROUND 1 por host)
+    - WAITING pré-vinculada não bloqueia o claim, mas é contada aqui para não
+      pré-vincular mais do que o runner consegue executar
+    - sem runner elegível: não pré-vincula (aviso no TaskLog no máximo 1x por hora)
+    - NÃO coloca a task em READY (quem faz isso é WorkerService.claim_task)
     """
+
+    BATCH_LIMIT = 500
 
     def __init__(self, db: Session):
         self.db = db
+        self.capacity = CapacityService(db)
         self.task_repo = TaskRepository(db)
-        self.runner_repo = RunnerRepository(db)
-        self.automation_runner_repo = AutomationRunnerRepository
 
     def dispatch_pending_tasks(self) -> int:
-        waiting_tasks = self._list_dispatchable_waiting_tasks()
-        dispatched = 0
-
-        for task in waiting_tasks:
-            existing_open = self.task_repo.get_open_task_for_automation(
-                task.automation_id,
-                exclude_task_id=task.id,
-            )
-            if existing_open:
-                continue
-
-            exclusive_conflict = self.task_repo.get_reserved_task_for_exclusive_groups(
-                task.automation_id,
-                exclude_task_id=task.id,
-            )
-            if exclusive_conflict:
-                continue
-
-            if self.task_repo.has_active_lock_for_exclusive_groups(task.automation_id):
-                continue
-
-            runner = self._find_best_runner_for_task(task)
-            if not runner:
-                continue
-
-            self.task_repo.update(
-                task,
-                {
-                    "runner_id": runner.id,
-                    "last_update_at": datetime.now(UTC),
-                    "dispatch_attempts": (task.dispatch_attempts or 0) + 1,
-                },
-            )
-            dispatched += 1
-
-        if dispatched:
-            self.db.commit()
-
-        return dispatched
-
-    def _list_dispatchable_waiting_tasks(self) -> list[Task]:
         now = datetime.now(UTC)
 
         stmt = (
-            select(Task)
-            .with_hint(Task, "WITH (UPDLOCK, ROWLOCK, READPAST)", "mssql")
+            select(Task, Bot.execution_mode)
+            .join(BotVersion, BotVersion.id == Task.bot_version_id)
+            .join(Bot, Bot.id == BotVersion.bot_id)
+            .join(Automation, Automation.id == Task.automation_id)
             .where(Task.status == TaskStatus.WAITING)
             .where(Task.runner_id.is_(None))
             .where((Task.requested_start_at.is_(None)) | (Task.requested_start_at <= now))
+            .where(Automation.active == True)
+            .where(Bot.active == True)
             .order_by(Task.priority.desc(), Task.id.asc())
-            .limit(DISPATCH_BATCH_LIMIT)
+            .limit(self.BATCH_LIMIT)
         )
+        rows = list(self.db.execute(stmt).all())
+        if not rows:
+            return 0
 
-        return list(self.db.execute(stmt).scalars().all())
+        links = self._load_links({task.automation_id for task, _ in rows})
+        runners = {
+            runner.id: runner
+            for runner in self.db.execute(
+                select(Runner).options(selectinload(Runner.config))
+            ).scalars().all()
+        }
+        host_groups = self._build_host_groups(runners.values())
 
-    def _find_best_runner_for_task(self, task: Task) -> Runner | None:
-        links = self.automation_runner_repo.list_by_automation(
-            self.db,
-            task.automation_id,
+        executing = self.capacity.count_by_runner_and_mode(EXECUTING_STATUSES)
+        pinned = self.capacity.count_by_runner_and_mode([TaskStatus.WAITING])
+
+        dispatched = 0
+
+        for task, raw_mode in rows:
+            mode = normalize_mode(raw_mode)
+
+            # Regras de junho/2026 preservadas: uma task aberta por automação e
+            # exclusão mútua por grupo (task reservada ou lock ativo do grupo).
+            if self.task_repo.get_open_task_for_automation(
+                task.automation_id, exclude_task_id=task.id
+            ):
+                continue
+            if self.task_repo.get_reserved_task_for_exclusive_groups(
+                task.automation_id, exclude_task_id=task.id
+            ):
+                continue
+            if self.task_repo.has_active_lock_for_exclusive_groups(task.automation_id):
+                continue
+
+            candidates = []
+            for runner_id in links.get(task.automation_id, ()):
+                runner = runners.get(runner_id)
+                if runner is None or not self._runner_is_eligible(runner):
+                    continue
+                if not self._has_room(runner, mode, executing, pinned, host_groups):
+                    continue
+                candidates.append(runner)
+
+            if not candidates:
+                add_task_log_once(
+                    self.db,
+                    task.id,
+                    (
+                        "Aguardando runner: nenhum runner elegível (online, habilitado, vinculado "
+                        f"à automação e com capacidade para o modo {mode.upper()}) no momento."
+                    ),
+                    "DISPATCH_NO_ELIGIBLE_RUNNER",
+                    within=NO_RUNNER_LOG_WINDOW,
+                    level=TaskLogLevel.INFO,
+                    source=TaskLogSource.DISPATCHER,
+                )
+                continue
+
+            runner = min(
+                candidates,
+                key=lambda r: (self._load(r.id, executing, pinned), r.id),
+            )
+
+            task.runner_id = runner.id
+            task.last_update_at = datetime.now(UTC)
+            task.dispatch_attempts = (task.dispatch_attempts or 0) + 1
+            self.db.add(task)
+            add_task_log(
+                self.db,
+                task.id,
+                (
+                    f"Task pré-vinculada ao runner '{runner.label or runner.name}' "
+                    f"(modo {mode.upper()}, menor carga entre {len(candidates)} elegível(is))."
+                ),
+                level=TaskLogLevel.INFO,
+                source=TaskLogSource.DISPATCHER,
+                event_code="DISPATCH_PINNED",
+                runner_id=runner.id,
+            )
+
+            pinned[(runner.id, mode)] += 1
+            dispatched += 1
+
+        self.db.commit()
+
+        if dispatched:
+            logger.info("Dispatcher pré-vinculou %s task(s).", dispatched)
+
+        return dispatched
+
+    def _load_links(self, automation_ids: set[int]) -> dict[int, list[int]]:
+        stmt = (
+            select(AutomationRunner.automation_id, AutomationRunner.runner_id)
+            .where(AutomationRunner.automation_id.in_(list(automation_ids)))
+            .order_by(AutomationRunner.id.asc())
         )
-        if not links:
-            return None
+        links: dict[int, list[int]] = defaultdict(list)
+        for automation_id, runner_id in self.db.execute(stmt).all():
+            links[automation_id].append(runner_id)
+        return links
 
-        eligible_runner_ids = {link.runner_id for link in links}
-        available_runners = self.runner_repo.list_all(
-            skip=0,
-            limit=500,
-            enabled=True,
+    @staticmethod
+    def _build_host_groups(runners) -> dict[int, list[int]]:
+        runners = list(runners)
+        by_host: dict[str, list[int]] = defaultdict(list)
+        for runner in runners:
+            host = normalize_host(runner.host_name)
+            if host:
+                by_host[host].append(runner.id)
+
+        groups: dict[int, list[int]] = {}
+        for runner in runners:
+            host = normalize_host(runner.host_name)
+            groups[runner.id] = by_host[host] if host else [runner.id]
+        return groups
+
+    @staticmethod
+    def _runner_is_eligible(runner) -> bool:
+        if not (bool(runner.enabled) and runner.status in (RunnerStatus.ONLINE, RunnerStatus.BUSY)):
+            return False
+        heartbeat = runner.last_heartbeat
+        if heartbeat is None:
+            return False
+        if heartbeat.tzinfo is None:
+            heartbeat = heartbeat.replace(tzinfo=UTC)
+        threshold = datetime.now(UTC) - timedelta(seconds=DISPATCH_RUNNER_HEARTBEAT_MAX_AGE_SECONDS)
+        return heartbeat >= threshold
+
+    @staticmethod
+    def _count(counter, runner_ids, mode: str) -> int:
+        return sum(counter.get((rid, mode), 0) for rid in runner_ids)
+
+    def _has_room(self, runner, mode, executing, pinned, host_groups) -> bool:
+        if mode == MODE_FOREGROUND:
+            group = host_groups.get(runner.id, [runner.id])
+            used = self._count(executing, group, mode) + self._count(pinned, group, mode)
+            return used < 1
+
+        used = executing.get((runner.id, mode), 0) + pinned.get((runner.id, mode), 0)
+        return used < runner_max_concurrency(runner)
+
+    @staticmethod
+    def _load(runner_id: int, executing, pinned) -> int:
+        return sum(t for (rid, _), t in executing.items() if rid == runner_id) + sum(
+            t for (rid, _), t in pinned.items() if rid == runner_id
         )
-
-        candidates = [
-            runner
-            for runner in available_runners
-            if runner.id in eligible_runner_ids
-        ]
-
-        for runner in self._rotate_candidates(candidates, task.id):
-            if self._runner_can_receive_task(runner, task):
-                return runner
-
-        return None
-
-    def _rotate_candidates(self, candidates: list[Runner], task_id: int) -> list[Runner]:
-        if not candidates:
-            return []
-
-        ordered = sorted(candidates, key=lambda runner: runner.id)
-        start_index = task_id % len(ordered)
-        return ordered[start_index:] + ordered[:start_index]
-
-    def _runner_can_receive_task(self, runner: Runner, task: Task) -> bool:
-        if not runner.enabled:
-            return False
-
-        if runner.status != RunnerStatus.ONLINE:
-            return False
-
-        if not self._runner_has_fresh_heartbeat(runner):
-            return False
-
-        if not self.task_repo.automation_has_runner_link(
-            task.automation_id,
-            runner.id,
-        ):
-            return False
-
-        if self.task_repo.count_open_for_runner(runner.id) > 0:
-            return False
-
-        return True
-
-    def _runner_has_fresh_heartbeat(self, runner: Runner) -> bool:
-        if runner.last_heartbeat is None:
-            return False
-
-        last_heartbeat = runner.last_heartbeat
-        if last_heartbeat.tzinfo is None:
-            last_heartbeat = last_heartbeat.replace(tzinfo=UTC)
-
-        threshold = datetime.now(UTC) - timedelta(
-            seconds=DISPATCH_RUNNER_HEARTBEAT_MAX_AGE_SECONDS
-        )
-        return last_heartbeat >= threshold

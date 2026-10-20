@@ -31,3 +31,6 @@ htmlcov/
 # Sistema
 .DS_Store
 Thumbs.db
+# Logs rotativos e estado de runtime (heartbeats)
+logs/
+runtime/

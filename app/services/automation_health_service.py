@@ -340,9 +340,12 @@ class AutomationHealthService:
             tz = UTC
 
         base_time = now_utc.astimezone(tz)
-        itr = croniter(schedule.cron_expression, base_time)
-        next_run = itr.get_next(datetime)
-        next_next_run = itr.get_next(datetime)
+        try:  # cron inválido não pode derrubar a listagem
+            itr = croniter(schedule.cron_expression, base_time)
+            next_run = itr.get_next(datetime)
+            next_next_run = itr.get_next(datetime)
+        except Exception:
+            return None
 
         interval = int((next_next_run - next_run).total_seconds())
         return interval if interval > 0 else None

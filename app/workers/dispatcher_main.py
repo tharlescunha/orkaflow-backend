@@ -1,64 +1,29 @@
-import logging
-import time
-import traceback
+# app/workers/dispatcher_main.py
+"""Loop do dispatcher. Normalmente executado como thread por ``app.workers.main``.
 
-from app.core.database import SessionLocal
+Rodar este arquivo isoladamente serve apenas para depuração e NÃO deve ser feito
+junto com ``app.workers.main`` (duplicaria o dispatcher).
+"""
+import threading
+
 from app.services.dispatch_service import DispatchService
-
-logger = logging.getLogger("dispatcher")
-
-_CONSECUTIVE_ERRORS = 0
-_MAX_CONSECUTIVE_ERRORS = 10
-_ERROR_BACKOFF_SECONDS = 30
+from app.workers._loop import run_service_loop
 
 
-def run_dispatcher(interval_seconds: int = 5):
-    global _CONSECUTIVE_ERRORS
+def _cycle(db, logger):
+    total = DispatchService(db).dispatch_pending_tasks()
+    if total:
+        logger.info("tasks despachadas: %s", total)
+    else:
+        logger.debug("tasks despachadas: 0")
 
-    logger.info("[DISPATCHER] iniciado.")
 
-    while True:
-        db = SessionLocal()
-        try:
-            service = DispatchService(db)
-            total = service.dispatch_pending_tasks()
-
-            if total:
-                logger.info("[DISPATCHER] tasks despachadas: %s", total)
-
-            _CONSECUTIVE_ERRORS = 0
-
-        except Exception as exc:
-            _CONSECUTIVE_ERRORS += 1
-            logger.error(
-                "[DISPATCHER] erro (consecutivo=%s): %s\n%s",
-                _CONSECUTIVE_ERRORS,
-                exc,
-                traceback.format_exc(),
-            )
-
-            try:
-                db.rollback()
-            except Exception:
-                pass
-
-            if _CONSECUTIVE_ERRORS >= _MAX_CONSECUTIVE_ERRORS:
-                logger.critical(
-                    "[DISPATCHER] %s erros consecutivos — pausando %ss para evitar flood.",
-                    _CONSECUTIVE_ERRORS,
-                    _ERROR_BACKOFF_SECONDS,
-                )
-                time.sleep(_ERROR_BACKOFF_SECONDS)
-                _CONSECUTIVE_ERRORS = 0
-
-        finally:
-            try:
-                db.close()
-            except Exception:
-                pass
-
-        time.sleep(interval_seconds)
+def run_dispatcher(interval_seconds: int = 5, stop_event: threading.Event | None = None):
+    run_service_loop("dispatcher", interval_seconds, _cycle, stop_event)
 
 
 if __name__ == "__main__":
+    import os
+
+    os.environ.setdefault("ORKAFLOW_LOG_NAME", "workers")
     run_dispatcher()

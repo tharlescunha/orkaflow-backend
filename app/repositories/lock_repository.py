@@ -23,7 +23,7 @@ class LockRepository:
             .where(Lock.released_at.is_(None))
             .order_by(Lock.id.desc())
         )
-        return self.db.execute(stmt).scalar_one_or_none()
+        return self.db.execute(stmt).scalars().first()
 
     def list_active_expired(self, now: datetime) -> list[Lock]:
         stmt = (
@@ -73,6 +73,21 @@ class LockRepository:
             self.release(lock, released_at)
 
         return locks
+
+    def renew_by_task_id(self, task_id: int, expires_at: datetime) -> int:
+        stmt = (
+            select(Lock)
+            .where(Lock.owner_task_id == task_id)
+            .where(Lock.active == True)
+            .where(Lock.released_at.is_(None))
+        )
+        locks = list(self.db.execute(stmt).scalars().all())
+        for lock in locks:
+            lock.expires_at = expires_at
+            self.db.add(lock)
+        if locks:
+            self.db.flush()
+        return len(locks)
 
     def release_by_runner_id(self, runner_id: int, released_at: datetime) -> list[Lock]:
         """

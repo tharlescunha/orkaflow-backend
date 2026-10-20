@@ -2,21 +2,18 @@ import json
 from datetime import UTC, datetime
 
 from app.core.exceptions import NotFoundException, ValidationException
-from app.domain.enums import ExecutionMode, RunnerStatus, TaskStatus
-from app.models.runner_status_history import RunnerStatusHistory
-from app.repositories.lock_repository import LockRepository
+from app.domain.enums import ExecutionMode, RunnerStatus, TaskLogLevel, TaskLogSource, TaskStatus
 from app.repositories.runner_repository import RunnerRepository
 from app.repositories.task_repository import TaskRepository
 from app.schemas.task import TaskCreate, TaskStatusUpdate, TaskUpdate
 from app.services.automation_trigger_service import AutomationTriggerService
+from app.services.capacity_service import CapacityService
+from app.services.lock_service import LockService
+from app.services.task_events import add_task_log
+from app.services.task_rules import FINAL_STATUSES as _FINAL_STATUSES
 
-FINAL_STATUSES = {
-    TaskStatus.FINISHED,
-    TaskStatus.ERROR,
-    TaskStatus.CANCELED,
-    TaskStatus.TIMEOUT,
-    TaskStatus.FORCED_STOP,
-}
+# Inclui FORCED_STOP (junho/2026).
+FINAL_STATUSES = set(_FINAL_STATUSES)
 
 STOP_ALLOWED_STATUSES = {
     TaskStatus.WAITING,
@@ -26,9 +23,9 @@ STOP_ALLOWED_STATUSES = {
 }
 
 FORCE_STOP_ALLOWED_STATUSES = {
+    TaskStatus.READY,
     TaskStatus.RUNNING,
     TaskStatus.STOP_REQUESTED,
-    TaskStatus.TIMEOUT,
 }
 
 CANCEL_ALLOWED_STATUSES = {
@@ -54,34 +51,24 @@ class TaskService:
         self.db = db
         self.repository = TaskRepository(db)
         self.runner_repository = RunnerRepository(db)
-        self.lock_repository = LockRepository(db)
+        self.lock_service = LockService(db)
+        self.capacity = CapacityService(db)
         self.automation_trigger_service = AutomationTriggerService(db)
 
-    def _release_task_locks(self, task_id: int, now: datetime):
-        self.lock_repository.release_by_task_id(task_id, now)
+    def _release_after_final(self, task) -> None:
+        """Libera os locks da task na hora e recalcula o estado do runner (derivado das tasks).
 
-    def _release_runner_if_possible(self, runner_id: int | None, reason: str):
-        if runner_id is None:
-            return
-
-        runner = self.runner_repository.get_by_id(runner_id)
-        if not runner or runner.status != RunnerStatus.BUSY:
-            return
-
-        if self.repository.count_open_for_runner(runner.id) > 0:
-            return
-
-        runner.status = RunnerStatus.ONLINE
-        self.db.add(runner)
-        self.db.add(
-            RunnerStatusHistory(
-                runner_id=runner.id,
-                status=RunnerStatus.ONLINE.value,
-                reason=reason,
-            )
-        )
+        Não bloqueia nem pausa o runner (exceto o bloqueio explícito de parada forçada,
+        feito em force_stop, recurso de junho/2026).
+        """
+        self.lock_service.release_task_locks(task.id)
+        self.capacity.refresh_runner_status_by_id(task.runner_id, reason="task_finalizada")
 
     def _block_runner(self, runner_id: int | None, reason: str):
+        """Bloqueia o runner após parada forçada manual (recurso de junho/2026).
+
+        Só é usado por force_stop (ação do usuário); nenhuma rotina automática bloqueia runner.
+        """
         if runner_id is None:
             return
 
@@ -89,15 +76,7 @@ class TaskService:
         if not runner or runner.status == RunnerStatus.MAINTENANCE:
             return
 
-        runner.status = RunnerStatus.BLOCKED
-        self.db.add(runner)
-        self.db.add(
-            RunnerStatusHistory(
-                runner_id=runner.id,
-                status=RunnerStatus.BLOCKED.value,
-                reason=reason,
-            )
-        )
+        self.capacity.set_runner_status(runner, RunnerStatus.BLOCKED, reason)
 
     def _get_automation_name(self, task) -> str | None:
         if not getattr(task, "automation", None):
@@ -585,12 +564,37 @@ class TaskService:
         if task.status not in STOP_ALLOWED_STATUSES:
             raise ValidationException("A task não está em um estado válido para solicitar parada.")
 
+        now = datetime.now(UTC)
+
+        # WAITING ainda não foi assumida por nenhum worker: cancela direto.
+        if task.status == TaskStatus.WAITING:
+            task = self.repository.update(
+                task,
+                {
+                    "status": TaskStatus.CANCELED,
+                    "finished_at": now,
+                    "last_update_at": now,
+                    "final_message": task.final_message or "Task cancelada antes de iniciar (parada solicitada).",
+                },
+            )
+            add_task_log(
+                self.db,
+                task.id,
+                "Parada solicitada com a task ainda em WAITING: task cancelada diretamente.",
+                level=TaskLogLevel.INFO,
+                source=TaskLogSource.PANEL,
+                event_code="STOP_REQUESTED_WAITING_CANCELED",
+            )
+            self._release_after_final(task)
+            self.db.commit()
+            return task
+
         task = self.repository.update(
             task,
             {
                 "stop_requested": True,
                 "status": TaskStatus.STOP_REQUESTED,
-                "last_update_at": datetime.now(UTC),
+                "last_update_at": now,
             },
         )
         self.db.commit()
@@ -620,7 +624,7 @@ class TaskService:
                 "final_message": task.final_message or "Task interrompida por parada forçada.",
             },
         )
-        self._release_task_locks(task.id, now)
+        self._release_after_final(task)
         self._block_runner(runner_id, reason="task_parada_forcada_requer_validacao")
         self.db.commit()
         return task
@@ -648,8 +652,7 @@ class TaskService:
                 "final_message": task.final_message or "Task cancelada manualmente.",
             },
         )
-        self._release_task_locks(task.id, now)
-        self._release_runner_if_possible(runner_id, reason="task_cancelada")
+        self._release_after_final(task)
         self.db.commit()
         return task
 
@@ -670,6 +673,8 @@ class TaskService:
         task = self.repository.update(task, data)
         if previous_status not in FINAL_STATUSES and payload.status == TaskStatus.FINISHED:
             self.automation_trigger_service.create_success_followups(task)
+        if task.status in FINAL_STATUSES:
+            self._release_after_final(task)
         self.db.commit()
         return task
 

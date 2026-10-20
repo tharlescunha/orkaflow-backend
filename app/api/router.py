@@ -64,6 +64,7 @@ protected_router.include_router(task_logs_router)
 protected_router.include_router(task_errors_router)
 protected_router.include_router(credentials_router)
 protected_router.include_router(dashboard_router)
+protected_router.include_router(permissions_router)
 
 worker_router = APIRouter()
 worker_router.include_router(worker_registration_router)
@@ -76,13 +77,14 @@ worker_router.include_router(worker_sync_router)
 worker_router.include_router(worker_credentials_router)
 worker_router.include_router(worker_telemetry_router)
 worker_router.include_router(worker_parameters_router)
-worker_router.include_router(worker_runtime_events_router)
 
 # 🔥 NOVO ROUTER
 worker_router.include_router(worker_screenshot_router)
+worker_router.include_router(worker_runtime_events_router)
 
+# IMPORTANTE: todos os sub-routers devem ser montados ANTES de include no api_router
+# (include_router copia as rotas no momento da chamada).
 api_router.include_router(public_router)
 api_router.include_router(protected_router)
 api_router.include_router(worker_router)
 api_router.include_router(profiles_router)
-protected_router.include_router(permissions_router)

@@ -1,8 +1,10 @@
 import base64
 import binascii
+import json
+import logging
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import (
@@ -17,12 +19,12 @@ from app.core.security import (
     get_runner_token_hash,
     verify_runner_token,
 )
-from app.domain.enums import RunnerStatus, TaskStatus
+from app.domain.enums import ErrorCategory, RunnerStatus, TaskLogLevel, TaskLogSource, TaskStatus
 from app.models.automation import Automation
 from app.models.automation_runner import AutomationRunner
+from app.models.bot import Bot
 from app.models.bot_version import BotVersion
 from app.models.runner import Runner
-from app.models.runner_status_history import RunnerStatusHistory
 from app.models.task import Task
 from app.repositories.bot_repository import BotRepository
 from app.repositories.credential_repository import CredentialRepository
@@ -44,9 +46,24 @@ from app.schemas.worker import (
     WorkerTaskReleaseStartupLocksResponse,
 )
 from app.services.automation_trigger_service import AutomationTriggerService
+from app.services.capacity_service import (
+    CapacityService,
+    normalize_host,
+    runner_max_concurrency,
+)
 from app.services.lock_service import LockService
+from app.services.task_events import add_task_error, add_task_log
+from app.services.task_rules import (
+    EXECUTING_STATUSES,
+    FINAL_STATUSES,
+    MODE_BACKGROUND,
+    MODE_FOREGROUND,
+    normalize_mode,
+)
 
+logger = logging.getLogger(__name__)
 
+# Status que o runner pode informar como finalização.
 RUNNER_FINALIZABLE_STATUSES = {
     TaskStatus.FINISHED,
     TaskStatus.ERROR,
@@ -60,27 +77,9 @@ RUNNER_PROGRESS_STATUSES = {
     TaskStatus.STOP_REQUESTED,
 }
 
-RUNNER_STARTUP_ACTIVE_STATUSES = {
-    TaskStatus.READY,
-    TaskStatus.RUNNING,
-    TaskStatus.STOP_REQUESTED,
-}
+RUNNER_STARTUP_ACTIVE_STATUSES = set(EXECUTING_STATUSES)
 
-RUNNER_OPEN_STATUSES = {
-    TaskStatus.WAITING,
-    TaskStatus.SCHEDULED,
-    TaskStatus.READY,
-    TaskStatus.RUNNING,
-    TaskStatus.STOP_REQUESTED,
-}
-
-RUNNER_EXECUTING_STATUSES = {
-    TaskStatus.READY,
-    TaskStatus.RUNNING,
-    TaskStatus.STOP_REQUESTED,
-}
-
-TASK_FINAL_STATUSES = RUNNER_FINALIZABLE_STATUSES | {TaskStatus.FORCED_STOP}
+DEFAULT_ERROR_MESSAGE = "Task finalizada com erro (o worker não informou detalhes)."
 
 
 class WorkerService:
@@ -93,100 +92,43 @@ class WorkerService:
         self.task_error_repository = TaskErrorRepository(db)
         self.task_telemetry_repository = TaskTelemetryRepository(db)
         self.lock_service = LockService(db)
+        self.capacity = CapacityService(db)
         self.automation_trigger_service = AutomationTriggerService(db)
         self.worker_runtime_event_repository = WorkerRuntimeEventRepository(db)
 
-    def _get_last_runner_status_history(self, runner_id: int) -> RunnerStatusHistory | None:
-        stmt = (
-            select(RunnerStatusHistory)
-            .where(RunnerStatusHistory.runner_id == runner_id)
-            .order_by(RunnerStatusHistory.created_at.desc(), RunnerStatusHistory.id.desc())
-            .limit(1)
-        )
-        return self.db.execute(stmt).scalars().first()
+    # ------------------------------------------------------------------
+    # helpers de runner / task
+    # ------------------------------------------------------------------
+    def _set_runner_status(self, runner, status: RunnerStatus, reason: str | None = None):
+        self.capacity.set_runner_status(runner, status, reason)
+        return runner
 
-    def _add_runner_status_history_if_needed(
-        self,
-        runner_id: int,
-        status: RunnerStatus,
-        reason: str | None = None,
-    ) -> None:
-        last_history = self._get_last_runner_status_history(runner_id)
+    def _refresh_runner_status(self, runner, reason: str = "status_derivado_das_tasks"):
+        """BUSY/ONLINE derivam das tasks abertas no banco, nunca do que o worker informa."""
+        return self.capacity.refresh_runner_status(runner, reason)
 
-        status_value = status.value if hasattr(status, "value") else str(status)
+    def _mark_alive(self, runner, reason: str = "worker_ativo") -> None:
+        """Qualquer chamada autenticada válida prova que o worker está vivo.
 
-        if last_history and last_history.status == status_value:
+        Atualiza last_heartbeat e, se o watchdog tinha deixado o runner OFFLINE
+        (heartbeat atrasado, sync/instalação), volta para ONLINE.
+        """
+        runner.last_heartbeat = datetime.now(UTC)
+        self.db.add(runner)
+        if runner.enabled and runner.status == RunnerStatus.OFFLINE:
+            self._set_runner_status(runner, RunnerStatus.ONLINE, reason)
+
+    def _touch_task(self, task, *, renew_lock: bool = True) -> None:
+        """Atividade real da task: atualiza last_update_at e renova o lock se estiver aberta."""
+        if task.status in FINAL_STATUSES:
             return
-
-        history = RunnerStatusHistory(
-            runner_id=runner_id,
-            status=status_value,
-            reason=reason,
-        )
-        self.db.add(history)
+        task.last_update_at = datetime.now(UTC)
+        self.db.add(task)
+        if renew_lock and task.status in EXECUTING_STATUSES:
+            self.lock_service.renew_task_locks(task)
 
     def _runner_has_executing_task(self, runner_id: int) -> bool:
-        tasks, _ = self.task_repository.list_all(
-            skip=0,
-            limit=1,
-            statuses=list(RUNNER_EXECUTING_STATUSES),
-            runner_ids=[runner_id],
-        )
-        return len(tasks) > 0
-
-    def _runner_has_other_open_task(self, runner_id: int, task_id: int) -> bool:
-        tasks, _ = self.task_repository.list_all(
-            skip=0,
-            limit=500,
-            statuses=list(RUNNER_OPEN_STATUSES),
-            runner_ids=[runner_id],
-        )
-
-        for task in tasks:
-            if task.id != task_id:
-                return True
-
-        return False
-
-    def _get_runner_for_claim_locked(self, runner_id: int) -> Runner | None:
-        stmt = (
-            select(Runner)
-            .with_hint(Runner, "WITH (UPDLOCK, ROWLOCK, HOLDLOCK)", "mssql")
-            .where(Runner.id == runner_id)
-        )
-        return self.db.execute(stmt).scalars().first()
-
-    def _get_task_for_claim_locked(self, task_id: int) -> Task | None:
-        stmt = (
-            self.task_repository._detail_query()
-            .with_hint(Task, "WITH (UPDLOCK, ROWLOCK, HOLDLOCK)", "mssql")
-            .where(Task.id == task_id)
-        )
-        return self.db.execute(stmt).scalars().first()
-
-    def _runner_has_other_open_task_locked(self, runner_id: int, task_id: int) -> bool:
-        stmt = (
-            select(Task.id)
-            .with_hint(Task, "WITH (UPDLOCK, ROWLOCK, HOLDLOCK)", "mssql")
-            .where(Task.runner_id == runner_id)
-            .where(Task.status.in_(RUNNER_OPEN_STATUSES))
-            .where(Task.id != task_id)
-            .limit(1)
-        )
-        return self.db.execute(stmt).scalars().first() is not None
-
-    def _set_runner_status(self, runner, status: RunnerStatus, reason: str | None = None):
-        if runner.status == status:
-            return runner
-
-        runner.status = status
-        self.db.add(runner)
-        self._add_runner_status_history_if_needed(
-            runner_id=runner.id,
-            status=status,
-            reason=reason,
-        )
-        return runner
+        return self.capacity.runner_has_executing_tasks(runner_id)
 
     def upload_runner_screenshot(self, payload) -> WorkerScreenshotUploadResponse:
         runner = self._authenticate_runner(payload.uuid, payload.token)
@@ -212,18 +154,53 @@ class WorkerService:
         )
 
     def create_runtime_event(self, payload) -> WorkerRuntimeEventResponse:
+        """Persiste evento do worker. task_id/automation_id/bot_id são opcionais.
+
+        Eventos sem task (sync_failed, bot_auto_update_failed, credential_resolve_failed,
+        bot_install_failed...) são aceitos. Referências inexistentes não derrubam o evento:
+        viram NULL e o valor original vai para extra_json.
+        """
         runner = self._authenticate_runner(payload.uuid, payload.token)
+        self._mark_alive(runner)
+
+        extra: dict = {}
+        raw_extra = getattr(payload, "extra", None)
+        if raw_extra is not None:
+            extra["extra"] = raw_extra
+
+        task_id = payload.task_id
+        if task_id is not None and self.db.get(Task, task_id) is None:
+            extra["task_id_inexistente"] = task_id
+            task_id = None
+
+        automation_id = payload.automation_id
+        if automation_id is not None and self.db.get(Automation, automation_id) is None:
+            extra["automation_id_inexistente"] = automation_id
+            automation_id = None
+
+        bot_id = payload.bot_id
+        if bot_id is not None and self.db.get(Bot, bot_id) is None:
+            extra["bot_id_inexistente"] = bot_id
+            bot_id = None
+
+        raw_mode = self._normalize_execution_mode(payload.execution_mode)
+        if payload.execution_mode and raw_mode is None:
+            extra["execution_mode_original"] = payload.execution_mode
+
+        event_type = (payload.event_type or "unknown").strip()[:100] or "unknown"
+        reason = payload.reason[:100] if payload.reason else None
 
         event = self.worker_runtime_event_repository.create(
             {
                 "runner_id": runner.id,
-                "task_id": payload.task_id,
-                "automation_id": payload.automation_id,
-                "bot_id": payload.bot_id,
-                "event_type": payload.event_type,
-                "execution_mode": payload.execution_mode,
-                "reason": payload.reason,
+                "task_id": task_id,
+                "automation_id": automation_id,
+                "bot_id": bot_id,
+                "event_type": event_type,
+                "execution_mode": raw_mode,
+                "reason": reason,
                 "message": payload.message,
+                "extra_json": json.dumps(extra, ensure_ascii=False, default=str) if extra else None,
                 "created_at": datetime.now(UTC),
             }
         )
@@ -350,15 +327,41 @@ class WorkerService:
 
         return parameters
 
+    def _find_runner_for_registration(self, payload) -> Runner | None:
+        """Procura por uuid; senão por nome (case-insensitive, preferindo o mesmo host)."""
+        runner = self.runner_repository.get_by_uuid(payload.uuid)
+        if runner:
+            return runner
+
+        name = (payload.name or "").strip().lower()
+        if not name:
+            return None
+
+        rows = list(
+            self.db.execute(select(Runner).where(func.lower(Runner.name) == name)).scalars().all()
+        )
+        if not rows:
+            return None
+
+        host = normalize_host(payload.host_name)
+        if host is not None:
+            for row in rows:
+                if normalize_host(row.host_name) == host:
+                    return row
+        return rows[0]
+
     def register_runner(self, payload):
-        existing_by_uuid = self.runner_repository.get_by_uuid(payload.uuid)
+        """Upsert: reinstalar/editar o worker não exige apagar o runner.
+
+        Procura por uuid, depois por nome. Se achou, atualiza (host, ip, os, label,
+        uuid novo, token rotacionado, reativa); senão cria.
+        """
+        existing = self._find_runner_for_registration(payload)
         plain_token = generate_runner_token()
         token_hash = get_runner_token_hash(plain_token)
 
-        if existing_by_uuid:
-            runner = self.runner_repository.update(
-                existing_by_uuid,
-                name=payload.name,
+        if existing:
+            update_data = dict(
                 label=payload.label,
                 host_name=payload.host_name,
                 ip=payload.ip,
@@ -368,8 +371,30 @@ class WorkerService:
                 memory_total=payload.memory_total,
                 access_remote=payload.access_remote,
                 token_hash=token_hash,
-                status=RunnerStatus.OFFLINE,
+                enabled=True,
             )
+
+            if existing.uuid != payload.uuid:
+                update_data["uuid"] = payload.uuid
+
+            # Nome: só troca se não colidir com outro runner.
+            new_name = (payload.name or "").strip()
+            if new_name and new_name != existing.name:
+                clash = self.db.execute(
+                    select(Runner.id)
+                    .where(func.lower(Runner.name) == new_name.lower())
+                    .where(Runner.id != existing.id)
+                ).first()
+                if not clash:
+                    update_data["name"] = new_name
+
+            # Manutenção/bloqueio são decisões do usuário: preserva. Demais voltam OFFLINE
+            # até o primeiro sync/heartbeat.
+            if existing.status not in (RunnerStatus.MAINTENANCE, RunnerStatus.BLOCKED):
+                update_data["status"] = RunnerStatus.OFFLINE
+
+            runner = self.runner_repository.update(existing, **update_data)
+            logger.info("Runner %s (id=%s) re-registrado (upsert).", runner.name, runner.id)
         else:
             runner = self.runner_repository.create(
                 uuid=payload.uuid,
@@ -403,7 +428,7 @@ class WorkerService:
             "enabled": runner.enabled,
             "token": plain_token,
             "polling_interval": config.polling_interval,
-            "max_concurrency": 1,
+            "max_concurrency": runner_max_concurrency(runner),
         }
 
     def authenticate(self, payload):
@@ -417,21 +442,20 @@ class WorkerService:
         }
 
     def heartbeat(self, payload) -> WorkerHeartbeatResponse:
+        """running_tasks do worker é só informativo; BUSY/ONLINE deriva das tasks do banco."""
         runner = self._authenticate_runner(payload.uuid, payload.token)
 
-        if runner.status in {RunnerStatus.MAINTENANCE, RunnerStatus.BLOCKED}:
-            new_status = runner.status
-        elif payload.running_tasks > 0:
-            new_status = RunnerStatus.BUSY
-        else:
-            new_status = RunnerStatus.ONLINE
+        if payload.ip:
+            runner.ip = payload.ip
+        self._mark_alive(runner, reason="heartbeat")
+        self._refresh_runner_status(runner, reason="heartbeat")
 
-        runner = self.runner_repository.update(
-            runner,
-            ip=payload.ip or runner.ip,
-            last_heartbeat=datetime.now(UTC),
-            status=new_status,
-        )
+        # Heartbeat renova o lock das tasks abertas do runner (não conta como atividade da task).
+        for task in self.task_repository.list_active_for_runner(runner.id):
+            self.lock_service.renew_task_locks(task)
+
+        self.db.commit()
+        self.db.refresh(runner)
 
         return WorkerHeartbeatResponse(
             ok=True,
@@ -444,27 +468,15 @@ class WorkerService:
     def sync_runner(self, payload: WorkerSyncRequest) -> WorkerSyncResponse:
         runner = self._authenticate_runner(payload.uuid, payload.token)
 
-        update_data = {
-            "last_heartbeat": datetime.now(UTC),
-        }
-
-        if runner.status not in {RunnerStatus.MAINTENANCE, RunnerStatus.BLOCKED}:
-            update_data["status"] = RunnerStatus.ONLINE
-
         if payload.host_name is not None:
-            update_data["host_name"] = payload.host_name
-
+            runner.host_name = payload.host_name
         if payload.ip is not None:
-            update_data["ip"] = payload.ip
+            runner.ip = payload.ip
 
-        runner = self.runner_repository.update(runner, **update_data)
-
-        self._add_runner_status_history_if_needed(
-            runner_id=runner.id,
-            status=runner.status,
-            reason="sync",
-        )
+        self._mark_alive(runner, reason="sync")
+        self._refresh_runner_status(runner, reason="sync")
         self.db.commit()
+        self.db.refresh(runner)
 
         config = self.runner_repository.get_config(runner.id)
         polling_interval = (
@@ -502,15 +514,8 @@ class WorkerService:
             if bot.id in added_bot_ids:
                 continue
 
-            active_version = (
-                self.db.query(BotVersion)
-                .filter(
-                    BotVersion.bot_id == bot.id,
-                    BotVersion.is_active == True,
-                )
-                .order_by(BotVersion.id.desc())
-                .first()
-            )
+            # Mesma regra de versão usada na criação das tasks (ativa; fallback última).
+            active_version = self.task_repository.get_latest_bot_version_for_bot(bot.id)
 
             bot_payloads.append(
                 {
@@ -530,11 +535,8 @@ class WorkerService:
                     "storage_type": active_version.storage_type if active_version else None,
                     "artifact_path": active_version.artifact_path if active_version else None,
                     "checksum": active_version.checksum if active_version else None,
-                    "execution_mode": self._normalize_execution_mode(
-                        getattr(bot, "execution_mode", None).value
-                        if hasattr(getattr(bot, "execution_mode", None), "value")
-                        else getattr(bot, "execution_mode", None)
-                    ),
+                    "execution_mode": normalize_mode(bot.execution_mode),
+                    # Flag do próprio bot (coluna bots.auto_update, junho/2026).
                     "auto_update": bool(getattr(bot, "auto_update", False)),
                 }
             )
@@ -545,7 +547,7 @@ class WorkerService:
             status=runner.status.value if hasattr(runner.status, "value") else str(runner.status),
             enabled=runner.enabled,
             polling_interval=polling_interval,
-            max_concurrency=1,
+            max_concurrency=runner_max_concurrency(runner),
             message="sync successful",
             bots=bot_payloads,
         )
@@ -572,32 +574,54 @@ class WorkerService:
         )
 
     def release_startup_locks(self, payload) -> WorkerTaskReleaseStartupLocksResponse:
+        """Worker reiniciou: o que estava em execução não existe mais no processo local.
+
+        As tasks READY/RUNNING/STOP_REQUESTED do runner viram ERROR (com TaskError e
+        TaskLog), os locks são liberados e o runner NÃO é bloqueado.
+        """
         runner = self._authenticate_runner(payload.uuid, payload.token)
+        self._mark_alive(runner, reason="startup")
         tasks = self.task_repository.list_active_for_runner(runner.id)
 
         tasks_finalized = 0
         task_locks_released = 0
 
         now = datetime.now(UTC)
+        message = "Task interrompida: worker foi reiniciado"
 
         for task in tasks:
             if task.status not in RUNNER_STARTUP_ACTIVE_STATUSES:
                 continue
 
-            final_message = (
-                "Task finalizada automaticamente na inicialização do worker, "
-                "pois havia sido deixada em execução sem processo local ativo."
-            )
+            previous_status = task.status.value if hasattr(task.status, "value") else str(task.status)
 
             self.task_repository.update(
                 task,
                 {
-                    "status": TaskStatus.CANCELED,
+                    "status": TaskStatus.ERROR,
                     "finished_at": now,
                     "last_update_at": now,
-                    "final_message": final_message,
-                    "stop_requested": False,
+                    "final_message": message,
                 },
+            )
+            add_task_error(
+                self.db,
+                task.id,
+                "WorkerRestarted",
+                message,
+                category=ErrorCategory.TECHNICAL,
+                source=TaskLogSource.SYSTEM,
+                code="WORKER_RESTARTED",
+                is_retryable=True,
+            )
+            add_task_log(
+                self.db,
+                task.id,
+                f"{message} (status anterior: {previous_status}). Task marcada como ERROR.",
+                level=TaskLogLevel.ERROR,
+                source=TaskLogSource.SYSTEM,
+                event_code="WORKER_RESTARTED",
+                runner_id=runner.id,
             )
             tasks_finalized += 1
 
@@ -606,16 +630,7 @@ class WorkerService:
 
         runner_locks_released = len(self.lock_service.release_runner_locks(runner.id))
 
-        if (
-            runner.status == RunnerStatus.BUSY
-            and self.task_repository.count_open_for_runner(runner.id) == 0
-        ):
-            self._set_runner_status(
-                runner,
-                RunnerStatus.ONLINE,
-                reason="startup_sem_tasks_ativas",
-            )
-
+        self._refresh_runner_status(runner, reason="startup_recuperacao")
         self.db.commit()
 
         return WorkerTaskReleaseStartupLocksResponse(
@@ -627,142 +642,161 @@ class WorkerService:
         )
 
     def get_next_task(self, payload):
+        """Devolve o primeiro candidato realmente claimável do modo pedido, se houver capacidade."""
         runner = self._authenticate_runner(payload.uuid, payload.token)
 
-        if runner.status != RunnerStatus.ONLINE:
+        if not runner.enabled:
             return self._empty_next_task_response()
 
-        # Não pode bloquear por WAITING, porque o dispatcher pré-vincula
-        # a task ao runner e ela continua WAITING até o claim_task().
-        # Aqui bloqueia somente se o runner já tiver task em execução real.
-        if self._runner_has_executing_task(runner.id):
+        self._mark_alive(runner, reason="next_task")
+        self._refresh_runner_status(runner, reason="next_task")
+        self.db.commit()
+
+        if runner.status in (RunnerStatus.MAINTENANCE, RunnerStatus.BLOCKED, RunnerStatus.OFFLINE):
             return self._empty_next_task_response()
 
-        requested_execution_mode = self._resolve_requested_execution_mode(payload)
-        candidates = self.task_repository.list_waiting_candidates_for_runner(runner.id)
+        requested = self._resolve_requested_execution_mode(payload)
+        modes = [requested] if requested else [MODE_BACKGROUND, MODE_FOREGROUND]
 
-        selected_task = None
-        selected_task_bot_id = None
-        selected_execution_mode = None
-
-        for candidate in candidates:
-            if not self.task_repository.automation_has_runner_link(
-                candidate.automation_id,
-                runner.id,
-            ):
+        for mode in modes:
+            # WAITING pré-vinculada não consome capacidade; só READY/RUNNING/STOP_REQUESTED.
+            if not self.capacity.has_capacity(runner, mode):
                 continue
 
-            candidate_bot_id, candidate_execution_mode = self._resolve_task_bot_context(candidate)
+            rows = self.task_repository.list_claim_candidates(runner.id, mode)
+            for candidate, bot_id, raw_mode in rows:
+                if self.lock_service.is_key_locked(self.lock_service.build_task_lock_key(candidate)):
+                    # Automação já em execução: não é claimável agora, tenta o próximo.
+                    continue
 
-            if requested_execution_mode is not None and candidate_execution_mode != requested_execution_mode:
-                continue
+                return {
+                    "found": True,
+                    "task_id": candidate.id,
+                    "automation_id": candidate.automation_id,
+                    "bot_id": bot_id,
+                    "bot_version_id": candidate.bot_version_id,
+                    "execution_mode": normalize_mode(raw_mode),
+                    "priority": candidate.priority,
+                    "status": candidate.status,
+                    "correlation_id": candidate.correlation_id,
+                    "queue_name": candidate.queue_name,
+                    "requested_start_at": candidate.requested_start_at,
+                    "timeout_seconds": candidate.timeout_seconds,
+                    "inactivity_timeout_seconds": candidate.inactivity_timeout_seconds,
+                    "parameters": self._resolve_task_parameters(candidate),
+                }
 
-            selected_task = candidate
-            selected_task_bot_id = candidate_bot_id
-            selected_execution_mode = candidate_execution_mode
-            break
-
-        if not selected_task:
-            return self._empty_next_task_response()
-
-        parameters = self._resolve_task_parameters(selected_task)
-
-        return {
-            "found": True,
-            "task_id": selected_task.id,
-            "automation_id": selected_task.automation_id,
-            "bot_id": selected_task_bot_id,
-            "bot_version_id": selected_task.bot_version_id,
-            "execution_mode": selected_execution_mode,
-            "priority": selected_task.priority,
-            "status": selected_task.status,
-            "correlation_id": selected_task.correlation_id,
-            "queue_name": selected_task.queue_name,
-            "requested_start_at": selected_task.requested_start_at,
-            "timeout_seconds": selected_task.timeout_seconds,
-            "inactivity_timeout_seconds": selected_task.inactivity_timeout_seconds,
-            "parameters": parameters,
-        }
+        return self._empty_next_task_response()
 
     def claim_task(self, task_id: int, payload):
-        authenticated_runner = self._authenticate_runner(payload.uuid, payload.token)
-        runner = self._get_runner_for_claim_locked(authenticated_runner.id)
-
-        if not runner:
-            raise UnauthorizedException("Runner nao encontrado.")
-
-        task = self._get_task_for_claim_locked(task_id)
+        """Claim atômico: UPDATE condicional (WAITING e sem outro runner) + checagem de rowcount."""
+        runner = self._authenticate_runner(payload.uuid, payload.token)
+        task = self.db.get(Task, task_id)
 
         if not task:
             raise NotFoundException("Task não encontrada.")
 
-        if task.status == TaskStatus.READY and task.runner_id == runner.id:
-            self._set_runner_status(
-                runner,
-                RunnerStatus.BUSY,
-                reason="task_claim_repetido",
-            )
-            self.db.commit()
-            return {
-                "task_id": task.id,
-                "runner_id": runner.id,
-                "status": task.status,
-            }
+        # Chamada autenticada válida = worker vivo. Persiste antes de qualquer validação.
+        self._mark_alive(runner, reason="claim_task")
+        self.db.commit()
 
-        if runner.status != RunnerStatus.ONLINE:
-            raise ForbiddenException("Runner precisa estar ONLINE para assumir tasks.")
+        if runner.status in (RunnerStatus.MAINTENANCE, RunnerStatus.BLOCKED):
+            raise ValidationException(
+                "Runner em manutenção/bloqueado: não pode assumir novas tasks no momento."
+            )
+
+        # Serializa os claims do mesmo runner (lock de linha até o commit),
+        # para a checagem de capacidade abaixo não correr em paralelo.
+        self.db.execute(
+            update(Runner)
+            .where(Runner.id == runner.id)
+            .values(last_heartbeat=datetime.now(UTC))
+            .execution_options(synchronize_session=False)
+        )
+
+        self.db.refresh(task)
+
+        # Retry idempotente do mesmo runner (ex.: resposta perdida na rede).
+        if task.runner_id == runner.id and task.status in EXECUTING_STATUSES:
+            self.db.commit()
+            return {"task_id": task.id, "runner_id": runner.id, "status": task.status}
 
         if task.status != TaskStatus.WAITING:
+            self.db.rollback()
             raise ValidationException("Somente tasks em WAITING podem ser assumidas pelo runner.")
 
         if task.runner_id is not None and task.runner_id != runner.id:
+            self.db.rollback()
             raise ValidationException("A task já está vinculada a outro runner.")
 
-        # Aqui pode considerar WAITING, mas ignorando a própria task.
-        # Isso impede o runner de assumir uma segunda task aberta.
-        if self._runner_has_other_open_task_locked(runner.id, task.id):
-            raise ValidationException("Runner já possui outra task aberta vinculada.")
+        if not self.task_repository.automation_has_runner_link(task.automation_id, runner.id):
+            self.db.rollback()
+            raise ForbiddenException("Esta automação não está vinculada a este runner.")
 
-        existing_open = self.task_repository.get_open_task_for_automation(
+        # Regras de junho/2026 preservadas: uma task aberta por automação e exclusão
+        # mútua por grupo exclusivo. (A regra "1 task aberta por runner" foi substituída
+        # pela capacidade por modo: N BACKGROUND + 1 FOREGROUND por host.)
+        if self.task_repository.get_open_task_for_automation(
             task.automation_id,
             exclude_task_id=task.id,
-        )
-        if existing_open:
+        ):
+            self.db.rollback()
             raise ValidationException("Automacao ja possui outra task aberta.")
 
-        exclusive_conflict = self.task_repository.get_reserved_task_for_exclusive_groups(
+        if self.task_repository.get_reserved_task_for_exclusive_groups(
             task.automation_id,
             exclude_task_id=task.id,
-        )
-        if exclusive_conflict:
+        ):
+            self.db.rollback()
             raise ValidationException(
                 "Grupo exclusivo ja possui outra task reservada ou em execucao."
             )
 
-        if not self.task_repository.automation_has_runner_link(task.automation_id, runner.id):
-            raise ForbiddenException("Esta automação não está vinculada a este runner.")
+        _, bot_mode = self._resolve_task_bot_context(task)
+        mode = bot_mode or MODE_BACKGROUND
 
-        self.lock_service.acquire_for_task(task, runner_id=runner.id)
+        if not self.capacity.has_capacity(runner, mode, exclude_task_id=task.id):
+            self.db.rollback()
+            if mode == MODE_FOREGROUND:
+                raise ValidationException(
+                    "Já existe uma task FOREGROUND em execução neste host."
+                )
+            raise ValidationException(
+                f"Runner atingiu o limite de {self.capacity.capacity_limit(runner, mode)} "
+                "task(s) BACKGROUND simultâneas."
+            )
+
+        try:
+            self.lock_service.acquire_for_task(task, runner_id=runner.id)
+            if mode == MODE_FOREGROUND:
+                self.lock_service.acquire_foreground_for_task(task, runner)
+        except ValidationException:
+            self.db.rollback()
+            raise
 
         now = datetime.now(UTC)
-
-        task = self.task_repository.update(
-            task,
-            {
-                "runner_id": runner.id,
-                "status": TaskStatus.READY,
-                "runner_claimed_at": now,
-                "last_update_at": now,
-                "dispatch_attempts": (task.dispatch_attempts or 0) + 1,
-            },
+        result = self.db.execute(
+            update(Task)
+            .where(Task.id == task.id)
+            .where(Task.status == TaskStatus.WAITING)
+            .where((Task.runner_id.is_(None)) | (Task.runner_id == runner.id))
+            .values(
+                status=TaskStatus.READY,
+                runner_id=runner.id,
+                runner_claimed_at=now,
+                last_update_at=now,
+                dispatch_attempts=func.coalesce(Task.dispatch_attempts, 0) + 1,
+            )
+            .execution_options(synchronize_session=False)
         )
 
-        self._set_runner_status(
-            runner,
-            RunnerStatus.BUSY,
-            reason="task_claimed",
-        )
+        if result.rowcount != 1:
+            # Outro claim ganhou: desfaz locks criados nesta transação.
+            self.db.rollback()
+            raise ValidationException("A task já foi assumida por outro runner.")
 
+        self.db.refresh(task)
+        self._refresh_runner_status(runner, reason="task_claimed")
         self.db.commit()
 
         return {
@@ -770,16 +804,24 @@ class WorkerService:
             "runner_id": runner.id,
             "status": task.status,
         }
-    
+
     def check_task_status(self, task_id: int, payload):
         runner = self._authenticate_runner(payload.uuid, payload.token)
         task = self.task_repository.get_by_id(task_id)
 
         self._validate_task_runner_ownership(task, runner)
 
+        self._mark_alive(runner, reason="task_status")
+        self.db.commit()
+
         stop_requested = bool(getattr(task, "stop_requested", False))
 
         if task.status == TaskStatus.STOP_REQUESTED:
+            stop_requested = True
+
+        # Task finalizada pelo backend (timeout, cancelamento, parada forçada...):
+        # só na resposta, o worker deve encerrar o processo local.
+        if task.status in FINAL_STATUSES and task.status != TaskStatus.FINISHED:
             stop_requested = True
 
         return {
@@ -789,6 +831,25 @@ class WorkerService:
             "runner_id": task.runner_id,
             "exists": True,
         }
+
+    def _ignore_transition(self, runner, task, requested: TaskStatus):
+        """Task já finalizada: ignora a mudança, registra TaskLog e responde 200."""
+        requested_value = requested.value if hasattr(requested, "value") else str(requested)
+        current_value = task.status.value if hasattr(task.status, "value") else str(task.status)
+        add_task_log(
+            self.db,
+            task.id,
+            f"Atualização de status '{requested_value}' ignorada: a task já está finalizada como "
+            f"'{current_value}'.",
+            level=TaskLogLevel.WARNING,
+            source=TaskLogSource.SYSTEM,
+            event_code="STATUS_TRANSITION_IGNORED",
+            runner_id=runner.id,
+        )
+        self.lock_service.release_task_locks(task.id)
+        self._refresh_runner_status(runner, reason="task_finalizada")
+        self.db.commit()
+        return task
 
     def update_task_status(self, task_id: int, payload):
         runner = self._authenticate_runner(payload.uuid, payload.token)
@@ -804,62 +865,61 @@ class WorkerService:
                 "Status informado não é permitido para atualização pelo runner."
             )
 
-        if task.status in TASK_FINAL_STATUSES:
-            if payload.status == task.status:
-                return task
+        self._mark_alive(runner, reason="task_status_update")
 
-            raise ValidationException("Task ja esta em status final e nao pode ser alterada.")
+        # Estados finais não voltam atrás (nem para outro final).
+        if task.status in FINAL_STATUSES:
+            return self._ignore_transition(runner, task, payload.status)
 
-        update_data = {
-            "status": payload.status,
-            "items_processed": (
-                payload.items_processed
-                if payload.items_processed is not None
-                else task.items_processed
-            ),
-            "items_failed": (
-                payload.items_failed
-                if payload.items_failed is not None
-                else task.items_failed
-            ),
-            "final_message": (
-                payload.final_message
-                if payload.final_message is not None
-                else task.final_message
-            ),
-            "result_json": (
-                payload.result_json
-                if getattr(payload, "result_json", None) is not None
-                else task.result_json
-            ),
-            "last_update_at": datetime.now(UTC),
-        }
+        if task.status == TaskStatus.WAITING and payload.status in RUNNER_PROGRESS_STATUSES:
+            raise ValidationException(
+                "A task ainda está em WAITING: faça o claim antes de informar progresso."
+            )
+
+        now = datetime.now(UTC)
+        new_status = payload.status
+
+        # STOP_REQUESTED é pegajoso e RUNNING não regride para READY.
+        if task.status == TaskStatus.STOP_REQUESTED and new_status in (TaskStatus.READY, TaskStatus.RUNNING):
+            new_status = TaskStatus.STOP_REQUESTED
+        elif task.status == TaskStatus.RUNNING and new_status == TaskStatus.READY:
+            new_status = TaskStatus.RUNNING
+
+        update_data = {"status": new_status, "last_update_at": now}
+
+        if payload.items_processed is not None:
+            update_data["items_processed"] = payload.items_processed
+        if payload.items_failed is not None:
+            update_data["items_failed"] = payload.items_failed
+        if payload.final_message is not None:
+            update_data["final_message"] = payload.final_message
+        if getattr(payload, "result_json", None) is not None:
+            update_data["result_json"] = payload.result_json
 
         if payload.status == TaskStatus.RUNNING and task.started_at is None:
-            update_data["started_at"] = datetime.now(UTC)
+            update_data["started_at"] = now
 
-        if payload.status in RUNNER_FINALIZABLE_STATUSES:
-            update_data["finished_at"] = datetime.now(UTC)
+        is_final = new_status in RUNNER_FINALIZABLE_STATUSES
+        if is_final:
+            update_data["finished_at"] = now
+            if new_status == TaskStatus.ERROR and not (
+                update_data.get("final_message") or task.final_message
+            ):
+                update_data["final_message"] = DEFAULT_ERROR_MESSAGE
 
         task = self.task_repository.update(task, update_data)
 
-        if payload.status in RUNNER_PROGRESS_STATUSES:
-            self._set_runner_status(
-                runner,
-                RunnerStatus.BUSY,
-                reason="task_progress",
-            )
-
-        if payload.status in RUNNER_FINALIZABLE_STATUSES:
+        if is_final:
             self.lock_service.release_task_locks(task.id)
-            self._set_runner_status(
-                runner,
-                RunnerStatus.ONLINE,
-                reason="task_finalizada",
-            )
-            if payload.status == TaskStatus.FINISHED:
-                self.automation_trigger_service.create_success_followups(task)
+        else:
+            self.lock_service.renew_task_locks(task)
 
+        if new_status == TaskStatus.FINISHED:
+            # Gatilhos de sucesso (junho/2026): só na primeira transição para FINISHED
+            # (estados finais já retornaram antes, em _ignore_transition).
+            self.automation_trigger_service.create_success_followups(task)
+
+        self._refresh_runner_status(runner, reason="task_finalizada" if is_final else "task_progress")
         self.db.commit()
         return task
 
@@ -872,36 +932,40 @@ class WorkerService:
         if payload.status not in RUNNER_FINALIZABLE_STATUSES:
             raise ValidationException("Finalização exige status final válido.")
 
-        if task.status in TASK_FINAL_STATUSES:
-            if payload.status == task.status:
-                return task
+        self._mark_alive(runner, reason="task_finish")
 
-            raise ValidationException(
-                "Task ja esta em status final e nao pode ser finalizada novamente com outro status."
-            )
+        if task.status in FINAL_STATUSES:
+            return self._ignore_transition(runner, task, payload.status)
 
-        started_at = task.started_at or datetime.now(UTC)
+        now = datetime.now(UTC)
 
-        task = self.task_repository.update(
-            task,
-            {
-                "status": payload.status,
-                "started_at": started_at,
-                "finished_at": datetime.now(UTC),
-                "last_update_at": datetime.now(UTC),
-                "final_message": payload.final_message,
-                "result_json": payload.result_json,
-                "items_processed": payload.items_processed,
-                "items_failed": payload.items_failed,
-            },
-        )
+        update_data = {
+            "status": payload.status,
+            "started_at": task.started_at or now,
+            "finished_at": now,
+            "last_update_at": now,
+        }
+
+        final_message = payload.final_message if payload.final_message is not None else task.final_message
+        if payload.status == TaskStatus.ERROR and not final_message:
+            final_message = DEFAULT_ERROR_MESSAGE
+        if final_message is not None:
+            update_data["final_message"] = final_message
+
+        if getattr(payload, "result_json", None) is not None:
+            update_data["result_json"] = payload.result_json
+
+        # Nulos não sobrescrevem contadores já registrados.
+        if getattr(payload, "items_processed", None) is not None:
+            update_data["items_processed"] = payload.items_processed
+        if getattr(payload, "items_failed", None) is not None:
+            update_data["items_failed"] = payload.items_failed
+
+        task = self.task_repository.update(task, update_data)
 
         self.lock_service.release_task_locks(task.id)
-        self._set_runner_status(
-            runner,
-            RunnerStatus.ONLINE,
-            reason="task_finalizada",
-        )
+        self._refresh_runner_status(runner, reason="task_finalizada")
+
         if payload.status == TaskStatus.FINISHED:
             self.automation_trigger_service.create_success_followups(task)
 
@@ -924,8 +988,13 @@ class WorkerService:
                 "error_type": payload.error_type,
                 "sequence_number": payload.sequence_number,
                 "event_code": payload.event_code,
+                "runner_id": runner.id,
             }
         )
+
+        # Log do worker é atividade da task (alimenta inactivity_timeout e renova o lock).
+        self._touch_task(task)
+        self._mark_alive(runner, reason="task_log")
 
         self.db.commit()
 
@@ -966,6 +1035,9 @@ class WorkerService:
                 "error_screenshot": error_screenshot,
             }
         )
+
+        self._touch_task(task)
+        self._mark_alive(runner, reason="task_error")
 
         self.db.commit()
 
@@ -1038,8 +1110,8 @@ class WorkerService:
         else:
             self.task_telemetry_repository.create(data)
 
-        task.last_update_at = datetime.now(UTC)
-        self.db.add(task)
+        self._touch_task(task)
+        self._mark_alive(runner, reason="task_telemetry")
 
         self.db.commit()
 

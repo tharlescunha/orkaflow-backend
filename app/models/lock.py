@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Index, String, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.domain.enums import LockScopeType
@@ -11,6 +11,17 @@ from app.models.base import Base, BaseModelMixin, TimestampMixin
 
 class Lock(Base, BaseModelMixin, TimestampMixin):
     __tablename__ = "locks"
+    __table_args__ = (
+        # Garante no banco que só exista um lock ativo por chave.
+        # Mesmo índice criado pela migration 7f3d2a91c8e4 (produção).
+        Index(
+            "uq_locks_active_lock_key",
+            "lock_key",
+            unique=True,
+            mssql_where=text("active = 1 AND released_at IS NULL"),
+            sqlite_where=text("active = 1 AND released_at IS NULL"),
+        ),
+    )
 
     lock_key: Mapped[str] = mapped_column(
         String(150),

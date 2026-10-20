@@ -60,6 +60,15 @@ journalctl -u orkaflow-workers -f
 
 ---
 
+### Variáveis recomendadas nos serviços systemd (api e workers)
+`Environment=PYTHONUNBUFFERED=1` (logs sem buffer no journalctl). Opcionais: `LOG_LEVEL`, `ORKAFLOW_LOG_DIR`, `ORKAFLOW_RUNTIME_DIR`.
+
+- Entrypoint único dos workers: `python -m app.workers.main` (supervisiona e reinicia threads; `app.workers.scheduler_main` está deprecated e só delega a ele).
+- Logs rotativos (10MB x 5): `logs/orkaflow-api.log` e `logs/orkaflow-workers.log`.
+- `GET /health`: 503 se o banco falhar ou um worker de fundo ficar sem ciclo ok por mais de 3x o intervalo. Os workers gravam heartbeats em `runtime/heartbeats/*.json`; a API precisa enxergar o mesmo diretório (mesmo host) ou o status fica `unknown`/`degraded` (HTTP 200).
+
+---
+
 ## 🔄 Atualizar systemd
 sudo systemctl daemon-reload
 

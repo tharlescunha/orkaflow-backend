@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import logging
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -12,13 +14,16 @@ from app.domain.enums import (
     SchedulePolicy,
     ScheduleStatus,
     ScheduleType,
+    TaskLogLevel,
+    TaskLogSource,
     TaskStatus,
 )
 from app.models.schedule import Schedule
 from app.models.task import Task
 from app.repositories.task_repository import TaskRepository
+from app.services.task_events import add_task_log
 
-import json
+logger = logging.getLogger(__name__)
 
 try:
     from croniter import CroniterBadCronError, croniter
@@ -26,19 +31,27 @@ except ImportError:  # pragma: no cover
     croniter = None
     CroniterBadCronError = Exception
 
+OUTCOME_CREATED = "created"
+OUTCOME_DUPLICATE = "duplicate"
+OUTCOME_SKIPPED = "skipped"
+# Transitório (ex.: já há task aberta da automação): não consome a ocorrência.
+OUTCOME_RETRY = "retry"
+
+MAX_TEXT = 1000
+
 
 class SchedulerEngineService:
     """
-    Engine avançada de schedules.
+    Engine de schedules.
 
-    Responsabilidades:
-    - Ler schedules ativos
-    - Calcular próxima execução com timezone
-    - Interpretar cron real
-    - Aplicar misfire policy
-    - Evitar duplicidade conforme policy
-    - Criar tasks automaticamente
-    - Atualizar last_run_at / next_run_at
+    Regra do dono: schedule NUNCA vai para ERROR por exceção, automação inativa ou
+    bot sem versão. Ele continua ACTIVE:
+    - exceção transitória: rollback, log, next_run_at não avança (reprocessa no próximo
+      ciclo) e o motivo fica em schedule.last_error;
+    - execução descartada (automação/bot inativo, sem versão, duplicidade, WAITING
+      existente, políticas IGNORE/ENQUEUE...): pula a execução e grava o motivo em
+      schedule.last_skipped_reason / last_skipped_at.
+    - ONCE só vira INACTIVE quando a task foi realmente criada.
     """
 
     MISFIRE_GRACE_SECONDS = 60
@@ -59,26 +72,45 @@ class SchedulerEngineService:
         )
 
         schedules = list(self.db.execute(stmt).scalars().all())
+        schedule_ids = [schedule.id for schedule in schedules]
         created_tasks = 0
 
-        for schedule in schedules:
+        for schedule_id in schedule_ids:
             try:
-                schedule_created = self._process_single_schedule(
+                schedule = self.db.get(Schedule, schedule_id)
+                if schedule is None:
+                    continue
+                created_tasks += self._process_single_schedule(
                     schedule=schedule,
                     now_utc=now_utc,
                 )
-                created_tasks += schedule_created
             except Exception as exc:
                 self.db.rollback()
-                schedule.status = ScheduleStatus.ERROR
-                self.db.add(schedule)
-                self.db.commit()
-                print(f"[SCHEDULER_ENGINE] erro schedule={schedule.id}: {exc}")
+                if isinstance(exc, ValueError):
+                    logger.warning("schedule=%s erro de configuração: %s", schedule_id, exc)
+                else:
+                    logger.exception("schedule=%s erro transitório no ciclo", schedule_id)
+                self._record_error(schedule_id, exc)
 
         return created_tasks
 
+    def _record_error(self, schedule_id: int, exc: Exception) -> None:
+        """Grava o último erro SEM mudar o status (continua ACTIVE) nem avançar next_run_at."""
+        try:
+            schedule = self.db.get(Schedule, schedule_id)
+            if schedule is None:
+                return
+            schedule.last_error = f"{type(exc).__name__}: {exc}"[:MAX_TEXT]
+            self.db.add(schedule)
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            logger.exception("schedule=%s não foi possível gravar last_error", schedule_id)
+
     def _process_single_schedule(self, schedule: Schedule, now_utc: datetime) -> int:
         created_tasks = 0
+        duplicate_tasks = 0
+        retry_tasks = 0
         changed = False
 
         next_run_at = self._ensure_next_run_at(schedule, now_utc)
@@ -107,42 +139,70 @@ class SchedulerEngineService:
                 self.db.commit()
             return 0
 
-        execution_times = self._resolve_execution_times_by_policy(schedule, due_times_utc, now_utc)
+        execution_times, policy_reason = self._resolve_execution_times_by_policy(
+            schedule, due_times_utc, now_utc
+        )
 
+        skip_reasons: list[str] = []
+        if not execution_times and policy_reason:
+            skip_reasons.append(policy_reason)
+
+        last_created_time = None
         for execution_time_utc in execution_times:
-            created = self._create_task(schedule, now_utc, execution_time_utc)
-            if created:
+            outcome, reason = self._create_task(schedule, now_utc, execution_time_utc)
+            if outcome == OUTCOME_CREATED:
                 created_tasks += 1
-                changed = True
+                last_created_time = execution_time_utc
+            elif outcome == OUTCOME_DUPLICATE:
+                duplicate_tasks += 1
+                if reason and reason not in skip_reasons:
+                    skip_reasons.append(reason)
+            else:
+                if outcome == OUTCOME_RETRY:
+                    retry_tasks += 1
+                if reason and reason not in skip_reasons:
+                    skip_reasons.append(reason)
 
-        if execution_times and created_tasks == 0:
-            if changed or schedule.status != ScheduleStatus.ACTIVE:
-                self.db.add(schedule)
-                self.db.commit()
-            return 0
+        if skip_reasons:
+            new_reason = "; ".join(skip_reasons)[:MAX_TEXT]
+            # Evita log a cada ciclo quando o mesmo motivo se repete (ex.: aguardando task aberta).
+            if new_reason != schedule.last_skipped_reason:
+                for reason in skip_reasons:
+                    logger.info("schedule=%s execução descartada: %s", schedule.id, reason)
+            schedule.last_skipped_reason = new_reason
+            schedule.last_skipped_at = now_utc
 
-        if execution_times:
-            schedule.last_run_at = execution_times[-1]
-            changed = True
+        schedule.last_error = None
 
-        if next_future_utc != schedule.next_run_at:
-            schedule.next_run_at = next_future_utc
-            changed = True
-
-        if schedule.calendar_type == CalendarType.ONCE and next_future_utc is None:
-            schedule.active = False
-            schedule.status = ScheduleStatus.INACTIVE
-            changed = True
-
-        if changed:
+        if retry_tasks and not created_tasks and not duplicate_tasks:
+            # Comportamento de junho preservado: nada foi criado por bloqueio transitório
+            # (task aberta da automação), então last_run_at/next_run_at NÃO avançam e a
+            # ocorrência é reavaliada no próximo ciclo. Status continua ACTIVE.
             self.db.add(schedule)
             self.db.commit()
+            return 0
 
         if created_tasks:
-            print(
-                f"[SCHEDULER_ENGINE] schedule={schedule.id} "
-                f"tasks_criadas={created_tasks} "
-                f"next_run_at={schedule.next_run_at}"
+            schedule.last_run_at = last_created_time
+
+        if schedule.calendar_type == CalendarType.ONCE:
+            if created_tasks or duplicate_tasks:
+                schedule.next_run_at = None
+                schedule.active = False
+                schedule.status = ScheduleStatus.INACTIVE
+            # Sem task criada: mantém ACTIVE e next_run_at para tentar de novo no próximo ciclo.
+        elif next_future_utc != schedule.next_run_at:
+            schedule.next_run_at = next_future_utc
+
+        self.db.add(schedule)
+        self.db.commit()
+
+        if created_tasks:
+            logger.info(
+                "schedule=%s tasks_criadas=%s next_run_at=%s",
+                schedule.id,
+                created_tasks,
+                schedule.next_run_at,
             )
 
         return created_tasks
@@ -177,9 +237,10 @@ class SchedulerEngineService:
             iterations += 1
 
             if iterations >= self.MAX_BACKFILL_OCCURRENCES:
-                print(
-                    f"[SCHEDULER_ENGINE] backfill_limit_reached "
-                    f"schedule={schedule.id} limit={self.MAX_BACKFILL_OCCURRENCES}"
+                logger.warning(
+                    "backfill_limit_reached schedule=%s limit=%s",
+                    schedule.id,
+                    self.MAX_BACKFILL_OCCURRENCES,
                 )
                 break
 
@@ -190,9 +251,10 @@ class SchedulerEngineService:
         schedule: Schedule,
         due_times_utc: list[datetime],
         now_utc: datetime,
-    ) -> list[datetime]:
+    ) -> tuple[list[datetime], str | None]:
+        """Retorna (horários a executar, motivo do descarte quando a lista vem vazia)."""
         if not due_times_utc:
-            return []
+            return [], None
 
         policy = schedule.policy or SchedulePolicy.CREATE_ALWAYS
 
@@ -217,25 +279,25 @@ class SchedulerEngineService:
 
         if policy == SchedulePolicy.IGNORE_IF_RUNNING:
             if has_running:
-                return []
-            return [latest_due]
+                return [], "Execução ignorada: política IGNORE_IF_RUNNING e há task em execução."
+            return [latest_due], None
 
         if policy == SchedulePolicy.ENQUEUE_IF_NONE_PENDING:
             if has_pending:
-                return []
-            return [latest_due]
+                return [], "Execução ignorada: política ENQUEUE_IF_NONE_PENDING e já há task pendente."
+            return [latest_due], None
 
         if policy == SchedulePolicy.RUN_IF_MISSED:
             if is_misfire:
-                return [now_utc]
-            return [latest_due]
+                return [now_utc], None
+            return [latest_due], None
 
         if policy == SchedulePolicy.SKIP_IF_MISSED:
             if is_misfire:
-                return []
-            return [latest_due]
+                return [], "Execução ignorada: política SKIP_IF_MISSED e o horário já passou da tolerância."
+            return [latest_due], None
 
-        return due_times_utc
+        return due_times_utc, None
 
     def _build_task_parameters_from_schedule(self, schedule: Schedule, automation) -> list[dict]:
         payload: list[dict] = []
@@ -299,40 +361,35 @@ class SchedulerEngineService:
         schedule: Schedule,
         now_utc: datetime,
         execution_time_utc: datetime,
-    ) -> bool:
+    ) -> tuple[str, str | None]:
+        """Retorna (resultado, motivo). Nunca altera o status do schedule."""
         existing = self._exists_task_for_execution(schedule.id, execution_time_utc)
         if existing:
-            print(
-                f"[SCHEDULER_ENGINE] duplicidade_evitar "
-                f"schedule={schedule.id} task_id={existing.id} requested_start_at={execution_time_utc}"
+            return (
+                OUTCOME_DUPLICATE,
+                f"Duplicidade evitada: task {existing.id} já existe para {execution_time_utc.isoformat()}.",
             )
-            return False
 
         existing_open = self.task_repo.get_open_task_for_automation(schedule.automation_id)
         if existing_open:
-            print(
-                f"[SCHEDULER_ENGINE] task_aberta_existente "
-                f"automation_id={schedule.automation_id} task_id={existing_open.id} "
-                f"status={existing_open.status.value}"
+            # Transitório: a ocorrência NÃO é consumida (o schedule tenta de novo no próximo ciclo).
+            return (
+                OUTCOME_RETRY,
+                f"Já existe task {existing_open.id} aberta (status={existing_open.status.value}) "
+                "para a automação; nova execução aguardando.",
             )
-            return False
 
         automation = self.task_repo.get_automation_by_id(schedule.automation_id)
         if not automation or not automation.active:
-            schedule.status = ScheduleStatus.ERROR
-            self.db.add(schedule)
-            return False
+            return OUTCOME_SKIPPED, "Automação inativa ou inexistente; execução pulada."
 
         bot = automation.bot
         if not bot or not bot.active:
-            print(f"[SCHEDULER_ENGINE] bot_inativo automation_id={automation.id}")
-            return False
+            return OUTCOME_SKIPPED, "Bot inativo ou inexistente; execução pulada."
 
         bot_version = self.task_repo.get_latest_bot_version_for_bot(automation.bot_id)
         if not bot_version:
-            schedule.status = ScheduleStatus.ERROR
-            self.db.add(schedule)
-            return False
+            return OUTCOME_SKIPPED, "Bot sem versão disponível; execução pulada."
 
         timeout_seconds = bot.timeout_default or 3600
         payload = self._build_task_parameters_from_schedule(schedule, automation)
@@ -341,13 +398,10 @@ class SchedulerEngineService:
             payload,
         )
         if missing_required:
-            schedule.status = ScheduleStatus.ERROR
-            self.db.add(schedule)
-            print(
-                "[SCHEDULER_ENGINE] parametros_obrigatorios_ausentes "
-                f"schedule={schedule.id} parametros={', '.join(missing_required)}"
+            return (
+                OUTCOME_SKIPPED,
+                "Parâmetros obrigatórios ausentes; execução pulada: " + ", ".join(missing_required),
             )
-            return False
 
         task = self.task_repo.create(
             {
@@ -367,7 +421,19 @@ class SchedulerEngineService:
         if payload:
             self.task_repo.create_parameters_bulk(task.id, payload)
 
-        return True
+        add_task_log(
+            self.db,
+            task.id,
+            (
+                f"Task criada pelo agendamento '{schedule.name}' (id {schedule.id}) "
+                f"para {execution_time_utc.isoformat()}."
+            ),
+            level=TaskLogLevel.INFO,
+            source=TaskLogSource.SCHEDULER,
+            event_code="SCHEDULE_TASK_CREATED",
+        )
+
+        return OUTCOME_CREATED, None
 
     def _find_missing_required_parameters(
         self,
@@ -538,4 +604,3 @@ class SchedulerEngineService:
         day = min(dt.day, last_day_of_target_month)
 
         return dt.replace(year=year, month=month, day=day)
-

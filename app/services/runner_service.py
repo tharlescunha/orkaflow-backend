@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import ConflictException, NotFoundException, ValidationException
 from app.repositories.runner_repository import RunnerRepository
+from app.services.task_rules import MAX_CONCURRENCY_CAP, MIN_CONCURRENCY
 from app.schemas.runner import RunnerConfigUpdate, RunnerCreate, RunnerRead, RunnerUpdate
 from datetime import UTC, datetime
 from app.schemas.runner_overview import (
@@ -136,8 +137,13 @@ class RunnerService:
 
         update_data = data.model_dump(exclude_unset=True)
 
-        if "max_concurrency" in update_data and update_data["max_concurrency"] < 1:
-            raise ValidationException("max_concurrency deve ser maior ou igual a 1.")
+        if "max_concurrency" in update_data and update_data["max_concurrency"] is not None:
+            if update_data["max_concurrency"] < MIN_CONCURRENCY:
+                raise ValidationException("max_concurrency deve ser maior ou igual a 1.")
+            if update_data["max_concurrency"] > MAX_CONCURRENCY_CAP:
+                raise ValidationException(
+                    f"max_concurrency deve ser menor ou igual a {MAX_CONCURRENCY_CAP}."
+                )
 
         if "polling_interval" in update_data and update_data["polling_interval"] < 5:
             raise ValidationException("polling_interval deve ser maior ou igual a 5.")
@@ -334,9 +340,27 @@ class RunnerService:
     ):
         runners = self.repo.list_all(skip=skip, limit=limit, enabled=enabled, status=status)
 
+        now = datetime.now(UTC)
         items = []
         for runner in runners:
-            overview = self.get_overview(
+            # Versão enxuta do get_overview: só o que a listagem mostra
+            # (evita ~10 queries por runner e a carga de listas de tasks).
+            counts = self.repo.get_runner_task_counts(
+                runner_id=runner.id,
+                date_from=date_from,
+                date_to=date_to,
+                status=task_status,
+                automation_id=automation_id,
+            )
+            linked_bots_count = self.repo.count_linked_bots(runner.id)
+            last_task = self.repo.get_last_execution_task(
+                runner_id=runner.id,
+                date_from=date_from,
+                date_to=date_to,
+                status=task_status,
+                automation_id=automation_id,
+            )
+            execution_seconds = self.repo.get_total_execution_seconds(
                 runner_id=runner.id,
                 date_from=date_from,
                 date_to=date_to,
@@ -344,24 +368,51 @@ class RunnerService:
                 automation_id=automation_id,
             )
 
+            registered_base = runner.created_at
+            if date_from is not None and date_from > runner.created_at:
+                registered_base = date_from
+            utilization_end = date_to if date_to is not None else now
+            registered_seconds = max(0, int((utilization_end - registered_base).total_seconds()))
+            utilization_percent = (
+                round((execution_seconds / registered_seconds) * 100, 2) if registered_seconds > 0 else 0.0
+            )
+
+            executed_total = (
+                counts["finished_tasks_count"]
+                + counts["error_tasks_count"]
+                + counts["timeout_tasks_count"]
+                + counts["canceled_tasks_count"]
+                + counts["forced_stop_tasks_count"]
+            )
+            error_total = (
+                counts["error_tasks_count"]
+                + counts["timeout_tasks_count"]
+                + counts["forced_stop_tasks_count"]
+            )
+
+            display_status = runner.status
+            if counts["running_tasks_count"] > 0:
+                display_status = "busy"
+            elif runner.status == "busy":
+                display_status = "online"
+
             items.append(
                 RunnerOverviewListItem(
-                    runner_id=overview.runner.id,
-                    runner_name=overview.runner.name,
-                    runner_label=overview.runner.label,
-                    status=overview.runner.status,
-                    enabled=overview.runner.enabled,
-                    linked_bots_count=overview.summary.linked_bots_count,
-                    running_tasks_count=overview.summary.running_tasks_count,
-                    waiting_tasks_count=overview.summary.waiting_tasks_count,
-                    executed_total_count=overview.summary.executed_total_count,
-                    success_total_count=overview.summary.success_total_count,
-                    error_total_count=overview.summary.error_total_count,
-                    utilization_percent=overview.utilization.utilization_percent,
-                    last_execution_at=overview.last_execution.started_at,
-                    last_execution_status=overview.last_execution.status,
+                    runner_id=runner.id,
+                    runner_name=runner.name,
+                    runner_label=runner.label,
+                    status=display_status,
+                    enabled=runner.enabled,
+                    linked_bots_count=linked_bots_count,
+                    running_tasks_count=counts["running_tasks_count"],
+                    waiting_tasks_count=counts["waiting_tasks_count"],
+                    executed_total_count=executed_total,
+                    success_total_count=counts["finished_tasks_count"],
+                    error_total_count=error_total,
+                    utilization_percent=utilization_percent,
+                    last_execution_at=last_task.started_at if last_task else None,
+                    last_execution_status=last_task.status if last_task else None,
                 )
             )
 
         return RunnerOverviewListResponse(items=items, total=len(items))
-    
