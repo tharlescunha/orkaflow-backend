@@ -27,6 +27,7 @@ from app.models.task_telemetry import TaskTelemetry
 from app.models.user import User
 from app.models.worker_runtime_event import WorkerRuntimeEvent
 from app.models.runner_status_history import RunnerStatusHistory
+from app.models.notification_channel import NotificationChannel, NotificationLog
 
 
 __all__ = [
@@ -58,4 +59,6 @@ __all__ = [
     "TaskTelemetry",
     "WorkerRuntimeEvent",
     "RunnerStatusHistory",
+    "NotificationChannel",
+    "NotificationLog",
 ]

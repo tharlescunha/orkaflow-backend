@@ -1,7 +1,7 @@
 # app/workers/main.py
 """ENTRYPOINT ÚNICO dos workers de fundo:  ``python -m app.workers.main``
 
-Sobe 4 threads (scheduler_runtime, watchdog, scheduler_engine, dispatcher) e as
+Sobe 5 threads (scheduler_runtime, watchdog, scheduler_engine, dispatcher, notifications) e as
 SUPERVISIONA: se alguma morrer, é reiniciada (com log e contador). Cada loop grava
 heartbeat em ``runtime/heartbeats/*.json``, lido por ``GET /health`` na API.
 
@@ -25,6 +25,7 @@ from app.services.system_heartbeat_service import (  # noqa: E402
     write_json_atomic,
 )
 from app.workers.dispatcher_main import run_dispatcher  # noqa: E402
+from app.workers.notifications_main import run_notifications  # noqa: E402
 from app.workers.scheduler_engine_main import run_scheduler_engine  # noqa: E402
 from app.workers.scheduler_runtime_main import run_scheduler_runtime  # noqa: E402
 from app.workers.watchdog_main import run_watchdog  # noqa: E402
@@ -61,6 +62,7 @@ def run_all_workers():
         "watchdog": run_watchdog,
         "scheduler_engine": run_scheduler_engine,
         "dispatcher": run_dispatcher,
+        "notifications": run_notifications,
     }
     started_at = datetime.now(timezone.utc).isoformat()
     threads: dict[str, threading.Thread] = {}

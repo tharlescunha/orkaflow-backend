@@ -33,6 +33,7 @@ EXPECTED_SERVICES: dict[str, int] = {
     "watchdog": 10,
     "scheduler_engine": 5,
     "scheduler_runtime": 5,
+    "notifications": 30,
 }
 STALE_FACTOR = 3
 SUPERVISOR_NAME = "_supervisor"
