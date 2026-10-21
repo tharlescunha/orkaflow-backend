@@ -52,6 +52,9 @@ class _Stub(BaseHTTPRequestHandler):
                 return self._reply(401, '{"erro": "token invalido"}')
             return self._reply(_Stub.status, "[98765]")
 
+        if self.path == "/grande":
+            return self._reply(200, json.dumps({"dados": "x" * 5000, "fim": "ULTIMO-CAMPO"}))
+
         return self._reply(_Stub.status, '{"id": 77}')
 
     do_PUT = do_PATCH = do_POST
@@ -249,6 +252,46 @@ class DeskLikeAuthFlowTests(NotificationBase):
         paths = [r["path"] for r in _Stub.received]
         self.assertEqual(paths.count("/login"), ns.SEND_ATTEMPTS)
         self.assertEqual(paths.count("/chamado"), ns.SEND_ATTEMPTS)
+
+    def test_history_detail_keeps_full_response_request_and_steps(self):
+        base = self.url.rsplit("/", 1)[0]
+        self.desk_channel(url=f"{base}/grande")
+
+        ns.send_test(self.db)
+        detail = ns.log_detail(ns.list_logs(self.db)[0])
+
+        self.assertGreater(len(detail["response_body"]), ns.MAX_SNIPPET_CHARS, "resposta completa, não só o trecho")
+        self.assertIn("ULTIMO-CAMPO", detail["response_body"])
+        self.assertLessEqual(len(detail["response_snippet"]), ns.MAX_SNIPPET_CHARS)
+        self.assertEqual(detail["request"]["method"], "PUT")
+        self.assertEqual(detail["request"]["headers"]["Authorization"], "***")
+        self.assertEqual(detail["steps"][0]["name"], "Autenticar")
+        self.assertEqual(detail["steps"][0]["extracted"], ["token"])
+
+    def test_secret_token_is_scrubbed_from_stored_details(self):
+        # mesmo que o corpo do envio ponha o token, o histórico guarda ***
+        self.desk_channel(body_template='{"t": "{{token}}", "erro": "{{erro_resumo}}"}')
+
+        result = ns.send_test(self.db)
+        stored = ns.list_logs(self.db)[0]
+
+        self.assertNotIn("_secrets", result)
+        self.assertNotIn("TOK-ABC", stored.details_json)
+        self.assertIn("***", stored.details_json)
+
+    def test_old_log_without_details_still_has_a_detail(self):
+        self.desk_channel()
+        ns.send_test(self.db)
+        entry = ns.list_logs(self.db)[0]
+        entry.details_json = None
+        self.db.flush()
+
+        detail = ns.log_detail(entry)
+
+        self.assertEqual(detail["steps"], [])
+        self.assertIsNone(detail["request"])
+        self.assertIsNone(detail["response_body"])
+        self.assertEqual(detail["status_code"], entry.status_code)
 
     def test_pre_steps_are_saved_and_returned(self):
         steps = [{

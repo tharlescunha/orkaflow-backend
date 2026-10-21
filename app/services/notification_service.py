@@ -40,6 +40,7 @@ SEND_ATTEMPTS = 3
 SEND_RETRY_DELAYS_SECONDS = (2, 5)
 MAX_ERROR_CHARS = 3500
 MAX_SNIPPET_CHARS = 1500
+MAX_RESPONSE_BODY_CHARS = 32000
 
 # nome, descrição, exemplo (usado pela tela e pelo envio de teste)
 VARIABLES: list[tuple[str, str, str]] = [
@@ -321,6 +322,7 @@ def _run_pre_steps(channel: NotificationChannel, variables: dict[str, str]):
     """
     all_vars = dict(variables)
     results: list[dict] = []
+    # (as variáveis extraídas ficam em all_vars; deliver() as usa para mascarar o histórico)
 
     for index, step in enumerate(channel_pre_steps(channel), start=1):
         name = step.get("name") or f"Etapa {index}"
@@ -377,6 +379,9 @@ def deliver(channel: NotificationChannel, variables: dict[str, str]) -> dict:
         "error": None,
         "request_preview": preview_of(prepared),
         "steps": step_results,
+        "response_body": None,
+        # valores extraídos pelas etapas (ex.: token): só para mascarar o histórico; nunca vão para a API
+        "_secrets": [all_vars[name] for step in step_results for name in step["extracted"] if name in all_vars],
     }
 
     if step_error:
@@ -389,6 +394,7 @@ def deliver(channel: NotificationChannel, variables: dict[str, str]) -> dict:
         status_code=sent["status_code"],
         response_snippet=sent["response_snippet"],
         error=sent["error"],
+        response_body=(sent["body_text"] or "")[:MAX_RESPONSE_BODY_CHARS] or None,
     )
     return result
 
@@ -406,7 +412,22 @@ def send_test(db: Session) -> dict:
     result = deliver(channel, sample_variables(channel))
     _write_log(db, channel, kind="test", result=result)
     db.commit()
+    result.pop("_secrets", None)  # valores extraídos (ex.: token) nunca saem do serviço
     return result
+
+
+def _scrub(value, secrets: list[str]):
+    """Troca valores secretos (ex.: token extraído) por *** em qualquer texto do detalhe."""
+    if isinstance(value, str):
+        for secret in secrets:
+            if secret:
+                value = value.replace(secret, "***")
+        return value
+    if isinstance(value, dict):
+        return {k: _scrub(v, secrets) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_scrub(v, secrets) for v in value]
+    return value
 
 
 def _write_log(
@@ -420,6 +441,16 @@ def _write_log(
     task_ids: list[int] | None = None,
     paused: bool = False,
 ) -> NotificationLog:
+    secrets = [s for s in (result.get("_secrets") or []) if s]
+    details = _scrub(
+        {
+            "request": result.get("request_preview"),
+            "steps": result.get("steps") or [],
+            "response_body": result.get("response_body"),
+        },
+        secrets,
+    )
+
     entry = NotificationLog(
         channel_id=channel.id,
         kind=kind,
@@ -429,12 +460,46 @@ def _write_log(
         task_ids=",".join(str(t) for t in task_ids) if task_ids else None,
         ok=bool(result.get("ok")),
         status_code=result.get("status_code"),
-        error=result.get("error"),
-        response_snippet=(result.get("response_snippet") or "")[:MAX_SNIPPET_CHARS] or None,
+        error=_scrub(result.get("error"), secrets),
+        response_snippet=_scrub((result.get("response_snippet") or "")[:MAX_SNIPPET_CHARS], secrets) or None,
         paused_schedule=paused,
+        details_json=json.dumps(details, ensure_ascii=False),
     )
     db.add(entry)
     return entry
+
+
+def get_log(db: Session, log_id: int) -> NotificationLog | None:
+    return db.get(NotificationLog, log_id)
+
+
+def log_detail(entry: NotificationLog) -> dict:
+    """Linha do histórico com requisição, etapas e resposta completa (se guardadas)."""
+    details: dict = {}
+    if entry.details_json:
+        try:
+            parsed = json.loads(entry.details_json)
+            details = parsed if isinstance(parsed, dict) else {}
+        except ValueError:
+            details = {}
+
+    return {
+        "id": entry.id,
+        "created_at": entry.created_at,
+        "kind": entry.kind,
+        "schedule_id": entry.schedule_id,
+        "schedule_name": entry.schedule_name,
+        "automation_name": entry.automation_name,
+        "task_ids": entry.task_ids,
+        "ok": entry.ok,
+        "status_code": entry.status_code,
+        "error": entry.error,
+        "response_snippet": entry.response_snippet,
+        "paused_schedule": entry.paused_schedule,
+        "request": details.get("request"),
+        "steps": details.get("steps") or [],
+        "response_body": details.get("response_body"),
+    }
 
 
 def list_logs(db: Session, limit: int = 50) -> list[NotificationLog]:

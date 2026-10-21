@@ -4,9 +4,11 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import require_admin
 from app.core.database import get_db
+from app.core.exceptions import NotFoundException
 from app.schemas.notification import (
     NotificationChannelRead,
     NotificationChannelUpdate,
+    NotificationLogDetail,
     NotificationLogRead,
     NotificationTestResult,
     NotificationVariableRead,
@@ -40,6 +42,15 @@ def test_channel(db: Session = Depends(get_db)):
 @router.get("/logs", response_model=list[NotificationLogRead])
 def list_logs(limit: int = Query(default=50, ge=1, le=500), db: Session = Depends(get_db)):
     return service.list_logs(db, limit)
+
+
+@router.get("/logs/{log_id}", response_model=NotificationLogDetail)
+def get_log(log_id: int, db: Session = Depends(get_db)):
+    """Detalhe completo de um envio: requisição (mascarada), etapas e resposta inteira."""
+    entry = service.get_log(db, log_id)
+    if entry is None:
+        raise NotFoundException("Envio não encontrado.")
+    return service.log_detail(entry)
 
 
 @router.get("/variables", response_model=list[NotificationVariableRead])

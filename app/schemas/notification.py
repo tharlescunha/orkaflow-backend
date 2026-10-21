@@ -160,6 +160,12 @@ class NotificationLogRead(OrkaBaseSchema):
     paused_schedule: bool = False
 
 
+class NotificationLogDetail(NotificationLogRead):
+    request: dict | None = None
+    steps: list[dict] = []
+    response_body: str | None = None
+
+
 class NotificationVariableRead(OrkaBaseSchema):
     name: str
     description: str

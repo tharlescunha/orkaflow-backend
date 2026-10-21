@@ -56,3 +56,5 @@ class NotificationLog(Base, BaseModelMixin, TimestampMixin):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     response_snippet: Mapped[str | None] = mapped_column(Text, nullable=True)
     paused_schedule: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Detalhes completos do envio (requisição enviada, etapas, resposta inteira), em JSON.
+    details_json: Mapped[str | None] = mapped_column(Text, nullable=True)
