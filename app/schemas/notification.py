@@ -2,11 +2,71 @@ from __future__ import annotations
 
 from datetime import datetime
 
+import re
+
 from pydantic import Field, field_validator
 
 from app.schemas.common import OrkaBaseSchema
 
 ALLOWED_METHODS = ("POST", "PUT", "PATCH")
+STEP_METHODS = ("GET", "POST", "PUT", "PATCH")
+VARIABLE_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+MAX_PRE_STEPS = 5
+
+
+def _clean_headers(value: dict[str, str]) -> dict[str, str]:
+    cleaned: dict[str, str] = {}
+    for key, val in value.items():
+        key = str(key).strip()
+        if not key:
+            raise ValueError("Cabeçalho com nome vazio.")
+        if any(char in key for char in "\r\n:"):
+            raise ValueError(f"Nome de cabeçalho inválido: {key!r}.")
+        cleaned[key] = str(val)
+    return cleaned
+
+
+class NotificationExtract(OrkaBaseSchema):
+    variable: str = Field(..., min_length=1, max_length=60)
+    path: str = Field(default="", max_length=200)
+
+    @field_validator("variable")
+    @classmethod
+    def _variable(cls, value: str):
+        value = value.strip()
+        if not VARIABLE_NAME_RE.match(value):
+            raise ValueError("Nome de variável inválido (use letras, números e _; não comece com número).")
+        return value
+
+
+class NotificationStep(OrkaBaseSchema):
+    name: str = Field(default="Etapa", max_length=120)
+    method: str = "POST"
+    url: str = Field(..., min_length=1, max_length=1000)
+    headers: dict[str, str] = {}
+    body_template: str = ""
+    extract: list[NotificationExtract] = []
+
+    @field_validator("method")
+    @classmethod
+    def _method(cls, value: str):
+        method = value.strip().upper()
+        if method not in STEP_METHODS:
+            raise ValueError("Método da etapa deve ser GET, POST, PUT ou PATCH.")
+        return method
+
+    @field_validator("url")
+    @classmethod
+    def _url(cls, value: str):
+        value = value.strip()
+        if not value.lower().startswith(("http://", "https://")):
+            raise ValueError("A URL da etapa deve começar com http:// ou https://")
+        return value
+
+    @field_validator("headers")
+    @classmethod
+    def _headers(cls, value: dict[str, str]):
+        return _clean_headers(value)
 
 
 class NotificationChannelRead(OrkaBaseSchema):
@@ -22,6 +82,7 @@ class NotificationChannelRead(OrkaBaseSchema):
     pause_schedule: bool
     deactivate_automation: bool
     panel_base_url: str | None = None
+    pre_steps: list[NotificationStep] = []
     updated_at: datetime | None = None
 
 
@@ -37,6 +98,7 @@ class NotificationChannelUpdate(OrkaBaseSchema):
     pause_schedule: bool | None = None
     deactivate_automation: bool | None = None
     panel_base_url: str | None = Field(default=None, max_length=300)
+    pre_steps: list[NotificationStep] | None = Field(default=None, max_length=MAX_PRE_STEPS)
 
     @field_validator("method")
     @classmethod
@@ -80,6 +142,7 @@ class NotificationTestResult(OrkaBaseSchema):
     response_snippet: str | None = None
     error: str | None = None
     request_preview: dict
+    steps: list[dict] = []
 
 
 class NotificationLogRead(OrkaBaseSchema):

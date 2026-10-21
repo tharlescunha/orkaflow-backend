@@ -25,16 +25,34 @@ class _Stub(BaseHTTPRequestHandler):
     received: list = []
     status = 201
 
-    def do_POST(self):
-        length = int(self.headers.get("Content-Length") or 0)
-        body = self.rfile.read(length).decode("utf-8")
-        _Stub.received.append({"path": self.path, "headers": dict(self.headers), "body": body})
-        data = b'{"id": 77}'
-        self.send_response(_Stub.status)
+    def _reply(self, status, payload):
+        data = payload.encode("utf-8")
+        self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(length).decode("utf-8")
+        _Stub.received.append({"path": self.path, "headers": dict(self.headers), "body": body})
+
+        if self.path == "/login":  # como o desk: chave no cabeçalho + PublicKey no corpo
+            try:
+                public_key = json.loads(body or "{}").get("PublicKey")
+            except ValueError:
+                public_key = None
+            if self.headers.get("Authorization") == "chave-fixa" and public_key == "pub":
+                return self._reply(200, '"TOK-ABC#123"')
+            return self._reply(401, '{"erro": "login recusado"}')
+
+        if self.path == "/chamado":
+            if self.headers.get("Authorization") != "TOK-ABC#123":
+                return self._reply(401, '{"erro": "token invalido"}')
+            return self._reply(_Stub.status, "[98765]")
+
+        return self._reply(_Stub.status, '{"id": 77}')
 
     do_PUT = do_PATCH = do_POST
 
@@ -113,6 +131,149 @@ class RenderTests(unittest.TestCase):
     def test_secret_headers_are_masked_in_preview(self):
         masked = ns.mask_headers({"Authorization": "Bearer abc", "X-Teste": "ok"})
         self.assertEqual(masked, {"Authorization": "***", "X-Teste": "ok"})
+
+
+class ExtractTests(unittest.TestCase):
+    def test_extract_paths(self):
+        self.assertEqual(ns.extract_value('"abc#1"', ""), "abc#1")  # JSON string
+        self.assertEqual(ns.extract_value("abc#1\n", "$"), "abc#1")  # texto cru
+        self.assertEqual(ns.extract_value('{"data": {"token": "x"}}', "data.token"), "x")
+        self.assertEqual(ns.extract_value("[98765]", "0"), "98765")
+        self.assertEqual(ns.extract_value('{"itens": [{"id": 5}]}', "itens.0.id"), "5")
+
+    def test_extract_missing_returns_none(self):
+        self.assertIsNone(ns.extract_value('{"a": 1}', "b"))
+        self.assertIsNone(ns.extract_value("[1]", "3"))
+        self.assertIsNone(ns.extract_value("", ""))
+        self.assertIsNone(ns.extract_value("null", ""))
+
+
+class DeskLikeAuthFlowTests(NotificationBase):
+    """Desk que exige login (token) antes de abrir o chamado."""
+
+    base = ""
+
+    def desk_channel(self, **overrides):
+        base = self.url.rsplit("/", 1)[0]
+        steps = [{
+            "name": "Autenticar",
+            "method": "POST",
+            "url": f"{base}/login",
+            "headers": {"Authorization": "chave-fixa"},
+            "body_template": '{"PublicKey": "pub"}',
+            "extract": [{"variable": "token", "path": ""}],
+        }]
+        channel = self.channel(
+            url=f"{base}/chamado",
+            method="PUT",
+            headers_json=json.dumps({"Authorization": "{{token}}"}),
+            body_template='{"TChamado": {"Assunto": "ERRO {{automacao}}", "Descricao": "{{erro}}"}}',
+            pre_steps_json=json.dumps(steps),
+        )
+        for key, value in overrides.items():
+            setattr(channel, key, value)
+        self.db.flush()
+        return channel
+
+    def test_login_then_ticket_uses_the_token(self):
+        self.desk_channel()
+
+        result = ns.send_test(self.db)
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual([r["path"] for r in _Stub.received], ["/login", "/chamado"])
+        self.assertEqual(_Stub.received[1]["headers"]["Authorization"], "TOK-ABC#123")
+        self.assertIn("Automacao_Estoque_PO", _Stub.received[1]["body"])
+        self.assertEqual(result["steps"], [
+            {"name": "Autenticar", "ok": True, "status_code": 200, "error": None, "extracted": ["token"]},
+        ])
+        self.assertEqual(result["response_snippet"], "[98765]")
+
+    def test_token_never_leaks_into_result_or_history(self):
+        self.desk_channel()
+        result = ns.send_test(self.db)
+
+        self.assertNotIn("TOK-ABC#123", json.dumps(result))
+        self.assertEqual(result["request_preview"]["headers"]["Authorization"], "***")
+        for entry in ns.list_logs(self.db):
+            self.assertNotIn("TOK-ABC", f"{entry.error} {entry.response_snippet}")
+
+    def test_login_refused_stops_before_the_ticket(self):
+        channel = self.desk_channel()
+        steps = json.loads(channel.pre_steps_json)
+        steps[0]["headers"] = {"Authorization": "chave-errada"}
+        channel.pre_steps_json = json.dumps(steps)
+        self.db.flush()
+
+        result = ns.send_test(self.db)
+
+        self.assertFalse(result["ok"])
+        self.assertIn("Etapa 'Autenticar' falhou", result["error"])
+        self.assertIn("login recusado", result["error"])
+        self.assertIn("não foi executado", result["error"])
+        self.assertEqual([r["path"] for r in _Stub.received], ["/login"], "o chamado não pode ser tentado")
+        self.assertFalse(result["steps"][0]["ok"])
+
+    def test_extract_not_found_fails_the_step(self):
+        channel = self.desk_channel()
+        steps = json.loads(channel.pre_steps_json)
+        steps[0]["extract"] = [{"variable": "token", "path": "campo.inexistente"}]
+        channel.pre_steps_json = json.dumps(steps)
+        self.db.flush()
+
+        result = ns.send_test(self.db)
+
+        self.assertFalse(result["ok"])
+        self.assertIn("Não encontrei", result["steps"][0]["error"])
+        self.assertEqual([r["path"] for r in _Stub.received], ["/login"])
+
+    def test_alert_flow_logs_in_on_every_attempt_and_pauses(self):
+        self.desk_channel()
+        for i in range(3):
+            self.run_task(TaskStatus.ERROR, f"e{i}")
+
+        self.assertEqual(ns.evaluate_failures(self.db), 1)
+
+        self.assertEqual([r["path"] for r in _Stub.received], ["/login", "/chamado"])
+        self.assertEqual(self.schedule.status, ScheduleStatus.PAUSED)
+        self.assertTrue(ns.list_logs(self.db)[0].ok)
+
+    def test_failed_attempts_redo_the_login(self):
+        _Stub.status = 500  # o chamado falha: cada tentativa refaz o login (token pode ter vencido)
+        self.desk_channel()
+        for i in range(3):
+            self.run_task(TaskStatus.ERROR, f"e{i}")
+
+        ns.evaluate_failures(self.db)
+
+        paths = [r["path"] for r in _Stub.received]
+        self.assertEqual(paths.count("/login"), ns.SEND_ATTEMPTS)
+        self.assertEqual(paths.count("/chamado"), ns.SEND_ATTEMPTS)
+
+    def test_pre_steps_are_saved_and_returned(self):
+        steps = [{
+            "name": "Autenticar", "method": "post", "url": "http://x/login", "headers": {"A": "b"},
+            "body_template": "{}", "extract": [{"variable": "token", "path": ""}],
+        }]
+        from app.schemas.notification import NotificationChannelUpdate
+
+        payload = NotificationChannelUpdate(url=self.url, pre_steps=steps).model_dump(exclude_unset=True)
+        read = ns.channel_to_read(ns.update_channel(self.db, payload))
+
+        self.assertEqual(read["pre_steps"][0]["method"], "POST")
+        self.assertEqual(read["pre_steps"][0]["extract"], [{"variable": "token", "path": ""}])
+
+    def test_step_schema_validation(self):
+        from pydantic import ValidationError
+
+        from app.schemas.notification import NotificationStep
+
+        with self.assertRaises(ValidationError):
+            NotificationStep(url="ftp://x")
+        with self.assertRaises(ValidationError):
+            NotificationStep(url="http://x", extract=[{"variable": "1ruim", "path": ""}])
+        with self.assertRaises(ValidationError):
+            NotificationStep(url="http://x", method="DELETE")
 
 
 class SqlServerCompatibilityTests(unittest.TestCase):

@@ -17,6 +17,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from types import SimpleNamespace
 from datetime import datetime, timezone
 
 from sqlalchemy import func, select
@@ -97,8 +98,19 @@ def channel_headers(channel: NotificationChannel) -> dict[str, str]:
         return {}
 
 
+def channel_pre_steps(channel: NotificationChannel) -> list[dict]:
+    if not channel.pre_steps_json:
+        return []
+    try:
+        data = json.loads(channel.pre_steps_json)
+    except (ValueError, TypeError):
+        return []
+    return [step for step in data if isinstance(step, dict)] if isinstance(data, list) else []
+
+
 def channel_to_read(channel: NotificationChannel) -> dict:
     return {
+        "pre_steps": channel_pre_steps(channel),
         "id": channel.id,
         "name": channel.name,
         "enabled": channel.enabled,
@@ -131,6 +143,9 @@ def update_channel(db: Session, data: dict) -> NotificationChannel:
 
     if data.get("headers") is not None:
         channel.headers_json = json.dumps(data["headers"], ensure_ascii=False)
+
+    if data.get("pre_steps") is not None:
+        channel.pre_steps_json = json.dumps(data["pre_steps"], ensure_ascii=False)
 
     if channel.enabled and not (channel.url or "").strip():
         db.rollback()
@@ -218,20 +233,46 @@ def preview_of(prepared: PreparedRequest) -> dict:
 
 
 # ------------------------------------------------------------------------- envio
-def deliver(channel: NotificationChannel, variables: dict[str, str]) -> dict:
-    """Envia a requisição configurada. Nunca levanta exceção: devolve o resultado."""
-    prepared = build_request(channel, variables)
-    result = {
-        "ok": False,
-        "status_code": None,
-        "response_snippet": None,
-        "error": None,
-        "request_preview": preview_of(prepared),
-    }
+MAX_BODY_FOR_EXTRACT = 64 * 1024
+
+
+def extract_value(body_text: str, path: str) -> str | None:
+    """
+    Tira um valor da resposta de uma etapa. `path` vazio ou "$" = resposta inteira (texto ou
+    JSON string); com ponto para campos e números para itens de lista ("token", "data.token",
+    "0", "itens.0.id"). Devolve None se não achar ou se vier vazio.
+    """
+    text = (body_text or "").strip()
+    try:
+        value = json.loads(text)
+    except ValueError:
+        value = text
+
+    parts = [p for p in (path or "").strip().removeprefix("$").strip(".").split(".") if p]
+    for part in parts:
+        if isinstance(value, list) and part.isdigit() and int(part) < len(value):
+            value = value[int(part)]
+        elif isinstance(value, dict) and part in value:
+            value = value[part]
+        else:
+            return None
+
+    if value is None:
+        return None
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False)
+
+    value = str(value).strip()
+    return value or None
+
+
+def _http_send(prepared: PreparedRequest, timeout: int) -> dict:
+    """Faz a chamada HTTP. Nunca levanta exceção. `body_text` guarda a resposta (uso interno)."""
+    out = {"ok": False, "status_code": None, "response_snippet": None, "body_text": "", "error": None}
 
     if not prepared.url.lower().startswith(("http://", "https://")):
-        result["error"] = "URL de destino inválida ou vazia."
-        return result
+        out["error"] = "URL de destino inválida ou vazia."
+        return out
 
     request = urllib.request.Request(
         prepared.url,
@@ -241,21 +282,114 @@ def deliver(channel: NotificationChannel, variables: dict[str, str]) -> dict:
     )
 
     try:
-        with urllib.request.urlopen(request, timeout=max(1, channel.timeout_seconds or 15)) as response:
-            result["status_code"] = response.status
-            result["response_snippet"] = response.read(MAX_SNIPPET_CHARS).decode("utf-8", "replace")
+        with urllib.request.urlopen(request, timeout=max(1, timeout or 15)) as response:
+            out["status_code"] = response.status
+            raw = response.read(MAX_BODY_FOR_EXTRACT).decode("utf-8", "replace")
+            out["body_text"] = raw
+            out["response_snippet"] = raw[:MAX_SNIPPET_CHARS]
     except urllib.error.HTTPError as exc:
-        result["status_code"] = exc.code
+        out["status_code"] = exc.code
         try:
-            result["response_snippet"] = exc.read(MAX_SNIPPET_CHARS).decode("utf-8", "replace")
+            raw = exc.read(MAX_BODY_FOR_EXTRACT).decode("utf-8", "replace")
+            out["body_text"] = raw
+            out["response_snippet"] = raw[:MAX_SNIPPET_CHARS]
         except Exception:
             pass
-        result["error"] = f"HTTP {exc.code}: {exc.reason}"
+        out["error"] = f"HTTP {exc.code}: {exc.reason}"
     except Exception as exc:
-        result["error"] = f"{type(exc).__name__}: {exc}"
+        out["error"] = f"{type(exc).__name__}: {exc}"
 
-    status = result["status_code"]
-    result["ok"] = status is not None and 200 <= status < 300 and result["error"] is None
+    status = out["status_code"]
+    out["ok"] = status is not None and 200 <= status < 300 and out["error"] is None
+    return out
+
+
+def _step_as_channel(step: dict) -> SimpleNamespace:
+    """Adapta uma etapa para reaproveitar build_request (mesmas regras de variáveis/escape)."""
+    return SimpleNamespace(
+        url=step.get("url") or "",
+        method=(step.get("method") or "POST").upper(),
+        headers_json=json.dumps(step.get("headers") or {}),
+        body_template=step.get("body_template") or "",
+    )
+
+
+def _run_pre_steps(channel: NotificationChannel, variables: dict[str, str]):
+    """
+    Executa as etapas anteriores em ordem. Devolve (variáveis completas, resultados, erro).
+    Os valores extraídos (ex.: token) só ficam em memória: nunca vão para log nem para a API.
+    """
+    all_vars = dict(variables)
+    results: list[dict] = []
+
+    for index, step in enumerate(channel_pre_steps(channel), start=1):
+        name = step.get("name") or f"Etapa {index}"
+        prepared = build_request(_step_as_channel(step), all_vars)
+        sent = _http_send(prepared, channel.timeout_seconds)
+
+        entry = {
+            "name": name,
+            "ok": sent["ok"],
+            "status_code": sent["status_code"],
+            "error": sent["error"],
+            "extracted": [],
+        }
+
+        if sent["ok"]:
+            for rule in step.get("extract") or []:
+                variable = str(rule.get("variable") or "").strip()
+                if not variable:
+                    continue
+                value = extract_value(sent["body_text"], str(rule.get("path") or ""))
+                if value is None:
+                    entry["ok"] = False
+                    entry["error"] = (
+                        f"Não encontrei '{rule.get('path') or 'resposta inteira'}' na resposta "
+                        f"para guardar em '{variable}'."
+                    )
+                    break
+                all_vars[variable] = value
+                entry["extracted"].append(variable)
+        elif sent["response_snippet"]:
+            # Resposta de erro da etapa (ex.: login recusado). Só quando falhou: não carrega token.
+            entry["error"] = f"{sent['error']} - {sent['response_snippet'][:200]}"
+
+        results.append(entry)
+
+        if not entry["ok"]:
+            return all_vars, results, f"Etapa '{name}' falhou: {entry['error']}"
+
+    return all_vars, results, None
+
+
+def deliver(channel: NotificationChannel, variables: dict[str, str]) -> dict:
+    """
+    Executa as etapas anteriores (se houver) e o envio principal. Nunca levanta exceção:
+    devolve o resultado, com `steps` descrevendo cada etapa anterior (sem valores extraídos).
+    """
+    all_vars, step_results, step_error = _run_pre_steps(channel, variables)
+    prepared = build_request(channel, all_vars)
+
+    result = {
+        "ok": False,
+        "status_code": None,
+        "response_snippet": None,
+        "error": None,
+        "request_preview": preview_of(prepared),
+        "steps": step_results,
+    }
+
+    if step_error:
+        result["error"] = f"{step_error} O envio principal não foi executado."
+        return result
+
+    sent = _http_send(prepared, channel.timeout_seconds)
+    result.update(
+        ok=sent["ok"],
+        status_code=sent["status_code"],
+        response_snippet=sent["response_snippet"],
+        error=sent["error"],
+    )
     return result
 
 

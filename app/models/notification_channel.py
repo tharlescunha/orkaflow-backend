@@ -33,6 +33,8 @@ class NotificationChannel(Base, BaseModelMixin, TimestampMixin):
     # Só falhas de tasks finalizadas a partir deste momento contam para o alerta
     # (definido ao ativar o canal), para falhas antigas não abrirem chamado.
     counting_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Etapas executadas antes do envio principal (ex.: login que devolve um token), em JSON.
+    pre_steps_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class NotificationLog(Base, BaseModelMixin, TimestampMixin):
