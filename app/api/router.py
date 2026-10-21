@@ -31,6 +31,7 @@ from app.api.v1.worker_credentials import router as worker_credentials_router
 from app.api.v1.profiles import router as profiles_router
 from app.api.v1.permissions import router as permissions_router
 from app.api.v1.notifications import router as notifications_router
+from app.api.v1.env_variables import router as env_variables_router
 
 from app.api.v1.worker_telemetry import router as worker_telemetry_router
 from app.api.v1.worker_parameters import router as worker_parameters_router
@@ -67,6 +68,7 @@ protected_router.include_router(credentials_router)
 protected_router.include_router(dashboard_router)
 protected_router.include_router(permissions_router)
 protected_router.include_router(notifications_router)
+protected_router.include_router(env_variables_router)
 
 worker_router = APIRouter()
 worker_router.include_router(worker_registration_router)

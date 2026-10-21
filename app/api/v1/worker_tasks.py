@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.schemas.env_variable import WorkerTaskEnvResponse
 from app.schemas.task import TaskRead
 from app.schemas.worker import (
     WorkerTaskActiveListRequest,
@@ -59,6 +60,17 @@ def check_task_status(
 ):
     service = WorkerService(db)
     return service.check_task_status(task_id, payload)
+
+
+@router.post("/{task_id}/env", response_model=WorkerTaskEnvResponse)
+def get_task_env(
+    task_id: int,
+    payload: WorkerTaskStatusCheckRequest,
+    db: Session = Depends(get_db),
+):
+    """Variáveis de ambiente finais da task (herança aplicada) para o worker injetar no robô."""
+    service = WorkerService(db)
+    return service.resolve_task_env(task_id, payload)
 
 
 @router.patch("/{task_id}/status", response_model=TaskRead)

@@ -807,6 +807,20 @@ class WorkerService:
             "status": task.status,
         }
 
+    def resolve_task_env(self, task_id: int, payload):
+        """Variáveis de ambiente da task (global < bot < automação < máquina) para o worker."""
+        from app.services import env_variable_service
+
+        runner = self._authenticate_runner(payload.uuid, payload.token)
+        task = self.task_repository.get_by_id(task_id)
+
+        self._validate_task_runner_ownership(task, runner)
+
+        self._mark_alive(runner, reason="task_env")
+        self.db.commit()
+
+        return env_variable_service.resolve_for_task(self.db, task)
+
     def check_task_status(self, task_id: int, payload):
         runner = self._authenticate_runner(payload.uuid, payload.token)
         task = self.task_repository.get_by_id(task_id)
