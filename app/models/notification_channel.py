@@ -1,7 +1,9 @@
 # app/models/notification_channel.py
 """Canal de notificação configurável (ex.: abrir chamado no desk) e histórico de envios."""
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
+from datetime import datetime
+
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, BaseModelMixin, TimestampMixin
@@ -28,6 +30,9 @@ class NotificationChannel(Base, BaseModelMixin, TimestampMixin):
     pause_schedule: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     deactivate_automation: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     panel_base_url: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    # Só falhas de tasks finalizadas a partir deste momento contam para o alerta
+    # (definido ao ativar o canal), para falhas antigas não abrirem chamado.
+    counting_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class NotificationLog(Base, BaseModelMixin, TimestampMixin):

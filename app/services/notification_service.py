@@ -19,7 +19,7 @@ import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import ValidationException
@@ -117,6 +117,7 @@ def channel_to_read(channel: NotificationChannel) -> dict:
 
 def update_channel(db: Session, data: dict) -> NotificationChannel:
     channel = get_or_create_channel(db)
+    was_enabled = bool(channel.enabled)
 
     for field in (
         "name", "enabled", "url", "method", "body_template", "timeout_seconds",
@@ -134,6 +135,10 @@ def update_channel(db: Session, data: dict) -> NotificationChannel:
     if channel.enabled and not (channel.url or "").strip():
         db.rollback()
         raise ValidationException("Informe a URL de destino para ativar as notificações.")
+
+    if channel.enabled and not was_enabled:
+        # Ao ativar, a contagem de falhas seguidas começa do zero: falhas antigas não notificam.
+        channel.counting_since = datetime.now(timezone.utc)
 
     db.add(channel)
     db.commit()
@@ -337,20 +342,22 @@ def _watermark(db: Session, schedule_id: int) -> int:
         return 0
 
 
-def failing_streak(db: Session, schedule: Schedule, threshold: int) -> list[Task]:
-    """As últimas `threshold` tasks finais do agendamento, se TODAS falharam (senão, lista vazia)."""
-    tasks = list(
-        db.scalars(
-            select(Task)
-            .where(
-                Task.schedule_id == schedule.id,
-                Task.status.in_(FINAL_FOR_STREAK),
-                Task.id > _watermark(db, schedule.id),
-            )
-            .order_by(Task.id.desc())
-            .limit(threshold)
-        )
+def failing_streak(
+    db: Session, schedule: Schedule, threshold: int, since: datetime | None = None
+) -> list[Task]:
+    """As últimas `threshold` tasks finais do agendamento, se TODAS falharam (senão, lista vazia).
+
+    `since`: só conta tasks finalizadas a partir desse momento (ver counting_since do canal).
+    """
+    stmt = select(Task).where(
+        Task.schedule_id == schedule.id,
+        Task.status.in_(FINAL_FOR_STREAK),
+        Task.id > _watermark(db, schedule.id),
     )
+    if since is not None:
+        stmt = stmt.where(func.coalesce(Task.finished_at, Task.last_update_at, Task.created_at) >= since)
+
+    tasks = list(db.scalars(stmt.order_by(Task.id.desc()).limit(threshold)))
 
     if len(tasks) < threshold or any(task.status not in FAILURE_STATUSES for task in tasks):
         return []
@@ -405,27 +412,30 @@ def _deliver_with_retries(channel: NotificationChannel, variables: dict[str, str
     return result
 
 
+def enabled_channel_stmt():
+    # `== True` (e não `.is_(True)`): o SQL Server não aceita `IS 1`.
+    return select(NotificationChannel).where(NotificationChannel.enabled == True).order_by(NotificationChannel.id)  # noqa: E712
+
+
+def active_schedules_stmt():
+    return select(Schedule).where(Schedule.status == ScheduleStatus.ACTIVE, Schedule.active == True)  # noqa: E712
+
+
 def evaluate_failures(db: Session) -> int:
     """
     Procura agendamentos ativos com N falhas seguidas, notifica e pausa. Devolve quantos
     foram tratados. Sem canal ativo, não faz nada.
     """
-    channel = db.scalars(
-        select(NotificationChannel).where(NotificationChannel.enabled.is_(True)).order_by(NotificationChannel.id)
-    ).first()
+    channel = db.scalars(enabled_channel_stmt()).first()
     if channel is None:
         return 0
 
     threshold = max(1, channel.failure_threshold or 3)
-    schedules = list(
-        db.scalars(
-            select(Schedule).where(Schedule.status == ScheduleStatus.ACTIVE, Schedule.active.is_(True))
-        )
-    )
+    schedules = list(db.scalars(active_schedules_stmt()))
 
     handled = 0
     for schedule in schedules:
-        tasks = failing_streak(db, schedule, threshold)
+        tasks = failing_streak(db, schedule, threshold, channel.counting_since)
         if not tasks:
             continue
 

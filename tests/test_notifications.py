@@ -115,6 +115,19 @@ class RenderTests(unittest.TestCase):
         self.assertEqual(masked, {"Authorization": "***", "X-Teste": "ok"})
 
 
+class SqlServerCompatibilityTests(unittest.TestCase):
+    """O sqlite aceita `IS 1`; o SQL Server não. Compila as consultas no dialeto do SQL Server."""
+
+    def test_queries_compile_without_boolean_is_for_mssql(self):
+        from sqlalchemy.dialects import mssql
+
+        for stmt in (ns.enabled_channel_stmt(), ns.active_schedules_stmt()):
+            sql = str(stmt.compile(dialect=mssql.dialect(), compile_kwargs={"literal_binds": True}))
+            self.assertNotIn(" IS 1", sql)
+            self.assertNotIn(" IS 0", sql)
+            self.assertIn("= 1", sql)
+
+
 class FailureStreakTests(NotificationBase):
     def test_disabled_channel_does_nothing(self):
         self.channel(enabled=False)
@@ -194,6 +207,24 @@ class FailureStreakTests(NotificationBase):
         self.assertEqual(entry.status_code, 500)
         self.assertTrue(entry.paused_schedule)
         self.assertIn("falha ao notificar", self.schedule.last_error)
+
+    def test_failures_from_before_enabling_do_not_count(self):
+        hour_ago = datetime.now(UTC) - timedelta(hours=1)
+        for i in range(3):
+            task = self.run_task(TaskStatus.ERROR, f"antiga{i}")
+            task.created_at = hour_ago
+        self.db.flush()
+
+        ns.update_channel(self.db, {"url": self.url, "enabled": True})  # ativa agora
+
+        self.assertEqual(ns.evaluate_failures(self.db), 0, "falhas antigas não abrem chamado")
+        self.assertEqual(_Stub.received, [])
+        self.assertEqual(self.schedule.status, ScheduleStatus.ACTIVE)
+
+        for i in range(3):
+            self.run_task(TaskStatus.ERROR, f"nova{i}")
+
+        self.assertEqual(ns.evaluate_failures(self.db), 1, "3 falhas depois de ativar alertam")
 
     def test_pause_options(self):
         self.channel(pause_schedule=False, deactivate_automation=True)
