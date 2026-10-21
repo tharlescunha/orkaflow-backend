@@ -39,7 +39,11 @@ class AuthService:
         }
 
     def refresh_token(self, refresh_token: str):
-        payload = decode_token(refresh_token)
+        try:
+            payload = decode_token(refresh_token)
+        except ValueError as exc:
+            # Refresh token vencido/inválido é sessão expirada (401), nunca erro 500.
+            raise UnauthorizedException(str(exc)) from exc
 
         if payload.get("type") != "refresh":
             raise UnauthorizedException("Token de refresh inválido.")
@@ -50,8 +54,7 @@ class AuthService:
 
         user = self.user_repo.get_by_id(int(user_id))
         if not user:
-            #raise NotFoundException("Usuário não encontrado.")
-            raise Exception("Bot não encontrado")
+            raise UnauthorizedException("Usuário não encontrado.")
 
         if not user.active:
             raise ForbiddenException("Usuário inativo.")
@@ -71,8 +74,7 @@ class AuthService:
     def get_me(self, user_id: int):
         user = self.user_repo.get_by_id(user_id)
         if not user:
-            raise Exception("Bot não encontrado")
-            #raise NotFoundException("Usuário não encontrado.")
+            raise UnauthorizedException("Usuário não encontrado.")
 
         if not user.active:
             raise ForbiddenException("Usuário inativo.")
