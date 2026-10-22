@@ -1,13 +1,14 @@
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.domain.enums import TaskStatus
+from app.domain.enums import RunnerStatus, TaskStatus
 from app.models.automation import Automation
 from app.models.automation_runner import AutomationRunner
 from app.models.runner import Runner
 from app.models.runner_config import RunnerConfig
 from app.models.task import Task
 from app.models.bot import Bot
+from app.services.task_rules import EXECUTING_STATUSES
 from datetime import UTC, datetime
 from sqlalchemy import case, func, select, distinct
 
@@ -45,8 +46,15 @@ class RunnerRepository:
         limit: int = 100,
         enabled: bool | None = None,
         status: str | None = None,
+        removed: bool = False,
     ) -> list[Runner]:
         stmt = select(Runner).options(selectinload(Runner.config)).order_by(Runner.name)
+
+        # Removidos só aparecem quando pedidos explicitamente (histórico).
+        if removed:
+            stmt = stmt.where(Runner.deleted_at.is_not(None))
+        else:
+            stmt = stmt.where(Runner.deleted_at.is_(None))
 
         if enabled is not None:
             stmt = stmt.where(Runner.enabled == enabled)
@@ -76,6 +84,42 @@ class RunnerRepository:
 
     def disable(self, runner: Runner) -> Runner:
         runner.enabled = False
+        self.db.add(runner)
+        self.db.commit()
+        self.db.refresh(runner)
+        return runner
+
+    def count_executing_tasks(self, runner_id: int) -> int:
+        stmt = (
+            select(func.count(Task.id))
+            .where(Task.runner_id == runner_id)
+            .where(Task.status.in_(list(EXECUTING_STATUSES)))
+        )
+        return int(self.db.execute(stmt).scalar_one() or 0)
+
+    def remove(self, runner: Runner) -> Runner:
+        """Marca como removido, desfaz vínculos e devolve à fila as tasks pré-vinculadas."""
+        now = datetime.now(UTC)
+
+        waiting = self.db.execute(
+            select(Task)
+            .where(Task.runner_id == runner.id)
+            .where(Task.status.in_([TaskStatus.WAITING, TaskStatus.SCHEDULED]))
+        ).scalars().all()
+        for task in waiting:
+            task.runner_id = None
+            task.last_update_at = now
+
+        for link in self.db.execute(
+            select(AutomationRunner).where(AutomationRunner.runner_id == runner.id)
+        ).scalars().all():
+            self.db.delete(link)
+
+        runner.deleted_at = now
+        runner.enabled = False
+        runner.status = RunnerStatus.OFFLINE
+        runner.last_screenshot_image = None
+
         self.db.add(runner)
         self.db.commit()
         self.db.refresh(runner)

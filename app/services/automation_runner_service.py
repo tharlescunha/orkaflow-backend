@@ -37,7 +37,7 @@ class AutomationRunnerService:
         AutomationService.get(db, automation_id)
 
         runner = db.query(Runner).filter(Runner.id == runner_id).first()
-        if not runner:
+        if not runner or runner.deleted_at is not None:
             raise NotFoundException("Runner não encontrado")
 
         existing = AutomationRunnerRepository.get_by_automation_and_runner(

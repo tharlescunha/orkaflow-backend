@@ -5,12 +5,36 @@ Executado como thread por ``app.workers.main``. Rodar isoladamente só para depu
 e nunca junto com ``app.workers.main``.
 """
 import threading
+import time
 
+from app.services.runner_log_service import RunnerLogService
 from app.services.watchdog_service import WatchdogService
 from app.workers._loop import run_service_loop
 
+# Limpeza dos logs das máquinas (tela de Logs) não precisa rodar a cada 10s.
+RUNNER_LOG_PURGE_INTERVAL_SECONDS = 600
+_last_runner_log_purge = 0.0
+
+
+def _purge_runner_logs(db, logger):
+    global _last_runner_log_purge
+    now = time.monotonic()
+    if now - _last_runner_log_purge < RUNNER_LOG_PURGE_INTERVAL_SECONDS:
+        return
+    _last_runner_log_purge = now
+    try:
+        deleted = RunnerLogService(db).purge_expired()
+        if deleted:
+            logger.info("runner_log_lines expiradas removidas=%s", deleted)
+    except Exception:
+        # Nunca derruba o ciclo do watchdog por causa dos logs.
+        db.rollback()
+        logger.exception("Falha ao limpar runner_log_lines expiradas")
+
 
 def _cycle(db, logger):
+    _purge_runner_logs(db, logger)
+
     service = WatchdogService(db)
 
     offline = service.mark_offline_runners()

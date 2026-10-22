@@ -58,6 +58,7 @@ class RunnerService:
                 "linked_bots_count": linked_bots_count,
                 "last_screenshot_at": runner.last_screenshot_at,
                 "has_screenshot": runner.last_screenshot_image is not None,
+                "deleted_at": runner.deleted_at,
             }
         )
 
@@ -82,8 +83,11 @@ class RunnerService:
         limit: int = 100,
         enabled: bool | None = None,
         status: str | None = None,
+        removed: bool = False,
     ):
-        runners = self.repo.list_all(skip=skip, limit=limit, enabled=enabled, status=status)
+        runners = self.repo.list_all(
+            skip=skip, limit=limit, enabled=enabled, status=status, removed=removed
+        )
         return [self._build_runner_read(runner) for runner in runners]
 
     def get(self, runner_id: int):
@@ -115,6 +119,21 @@ class RunnerService:
         updated_runner = self.repo.disable(runner)
         updated_runner = self.repo.get_by_id(updated_runner.id)
         return self._build_runner_read(updated_runner)
+
+    def remove(self, runner_id: int):
+        """Remove o runner do painel (soft delete). Recusa se houver task em execução nele."""
+        runner = self.repo.get_by_id(runner_id)
+        if not runner:
+            raise NotFoundException("Runner não encontrado.")
+
+        if runner.deleted_at is None:
+            if self.repo.count_executing_tasks(runner.id) > 0:
+                raise ConflictException(
+                    "Runner com task em execução. Aguarde terminar ou pare a task antes de remover."
+                )
+            self.repo.remove(runner)
+
+        return self._build_runner_read(self.repo.get_by_id(runner_id))
 
     def get_config(self, runner_id: int):
         runner = self.repo.get_by_id(runner_id)

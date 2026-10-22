@@ -47,6 +47,14 @@ class Runner(Base, BaseModelMixin, TimestampMixin):
     access_remote: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
 
+    # Runner removido pelo administrador: some das listagens e não executa mais nada.
+    # A linha fica no banco para o histórico das tasks antigas continuar com o nome.
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        index=True,
+    )
+
     # Último print de tela enviado pelo worker
     last_screenshot_image: Mapped[bytes | None] = mapped_column(
         LargeBinary,

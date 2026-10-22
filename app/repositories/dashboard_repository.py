@@ -130,7 +130,7 @@ class DashboardRepository:
         return list(self.db.execute(stmt).scalars().all())
 
     def list_runners(self, *, enabled: bool | None = None) -> list[Runner]:
-        stmt = select(Runner).order_by(Runner.name.asc())
+        stmt = select(Runner).where(Runner.deleted_at.is_(None)).order_by(Runner.name.asc())
 
         if enabled is not None:
             stmt = stmt.where(Runner.enabled == enabled)

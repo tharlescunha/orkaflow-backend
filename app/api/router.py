@@ -32,6 +32,8 @@ from app.api.v1.profiles import router as profiles_router
 from app.api.v1.permissions import router as permissions_router
 from app.api.v1.notifications import router as notifications_router
 from app.api.v1.env_variables import router as env_variables_router
+from app.api.v1.runner_logs import router as runner_logs_router
+from app.api.v1.worker_runner_logs import router as worker_runner_logs_router
 
 from app.api.v1.worker_telemetry import router as worker_telemetry_router
 from app.api.v1.worker_parameters import router as worker_parameters_router
@@ -69,6 +71,7 @@ protected_router.include_router(dashboard_router)
 protected_router.include_router(permissions_router)
 protected_router.include_router(notifications_router)
 protected_router.include_router(env_variables_router)
+protected_router.include_router(runner_logs_router)
 
 worker_router = APIRouter()
 worker_router.include_router(worker_registration_router)
@@ -85,6 +88,7 @@ worker_router.include_router(worker_parameters_router)
 # 🔥 NOVO ROUTER
 worker_router.include_router(worker_screenshot_router)
 worker_router.include_router(worker_runtime_events_router)
+worker_router.include_router(worker_runner_logs_router)
 
 # IMPORTANTE: todos os sub-routers devem ser montados ANTES de include no api_router
 # (include_router copia as rotas no momento da chamada).

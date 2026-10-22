@@ -106,6 +106,7 @@ class TaskRepository:
         stmt = (
             select(Runner)
             .where(Runner.enabled == True)
+            .where(Runner.deleted_at.is_(None))
             .order_by(Runner.name.asc())
         )
         return self.db.execute(stmt).scalars().all()

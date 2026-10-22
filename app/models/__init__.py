@@ -29,6 +29,7 @@ from app.models.worker_runtime_event import WorkerRuntimeEvent
 from app.models.runner_status_history import RunnerStatusHistory
 from app.models.notification_channel import NotificationChannel, NotificationLog
 from app.models.env_variable import EnvVariable
+from app.models.runner_log_line import RunnerLogLine
 
 
 __all__ = [
@@ -63,4 +64,5 @@ __all__ = [
     "NotificationChannel",
     "NotificationLog",
     "EnvVariable",
+    "RunnerLogLine",
 ]

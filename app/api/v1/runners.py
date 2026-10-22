@@ -26,10 +26,13 @@ def list_runners(
     limit: int = Query(100, ge=1, le=500),
     enabled: bool | None = Query(None),
     status_filter: str | None = Query(None, alias="status"),
+    removed: bool = Query(False, description="true lista só os runners removidos (histórico)."),
     db: Session = Depends(get_db),
 ):
     service = RunnerService(db)
-    return service.list(skip=skip, limit=limit, enabled=enabled, status=status_filter)
+    return service.list(
+        skip=skip, limit=limit, enabled=enabled, status=status_filter, removed=removed
+    )
 
 
 # Rotas estáticas ANTES das parametrizadas (/{runner_id}), senão /overview dá 422.
@@ -120,12 +123,13 @@ def update_runner(
 
 
 @router.delete("/{runner_id}", response_model=RunnerRead)
-def disable_runner(
+def remove_runner(
     runner_id: int,
     db: Session = Depends(get_db),
 ):
+    """Remove o runner do painel: some das telas, perde os vínculos e o worker é recusado."""
     service = RunnerService(db)
-    return service.disable(runner_id)
+    return service.remove(runner_id)
 
 
 @router.get("/{runner_id}/config", response_model=RunnerConfigRead)

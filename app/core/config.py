@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     jwt_access_token_expire_minutes: int = Field(30, alias="JWT_ACCESS_TOKEN_EXPIRE_MINUTES")
     jwt_refresh_token_expire_days: int = Field(7, alias="JWT_REFRESH_TOKEN_EXPIRE_DAYS")
 
+    # Tela de Logs: dias que as linhas do worker.log das máquinas ficam no banco.
+    runner_log_retention_days: int = Field(3, ge=1, alias="RUNNER_LOG_RETENTION_DAYS")
+
     @property
     def database_url(self) -> str:
         user = quote_plus(self.db_user)

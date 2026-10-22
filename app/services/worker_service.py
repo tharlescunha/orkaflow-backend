@@ -220,6 +220,12 @@ class WorkerService:
         if not runner:
             raise UnauthorizedException("Runner não encontrado.")
 
+        if runner.deleted_at is not None:
+            raise ForbiddenException(
+                "Runner removido do painel: esta máquina não está configurada. "
+                "Rode o configurar_worker.bat para registrá-la de novo."
+            )
+
         if not runner.enabled:
             raise ForbiddenException("Runner desativado.")
 
@@ -394,6 +400,11 @@ class WorkerService:
             # até o primeiro sync/heartbeat.
             if existing.status != RunnerStatus.MAINTENANCE:
                 update_data["status"] = RunnerStatus.OFFLINE
+
+            # Registrar de novo uma máquina removida a traz de volta (update() ignora None).
+            if existing.deleted_at is not None:
+                existing.deleted_at = None
+                logger.info("Runner %s (id=%s) estava removido e voltou pelo registro.", existing.name, existing.id)
 
             runner = self.runner_repository.update(existing, **update_data)
             logger.info("Runner %s (id=%s) re-registrado (upsert).", runner.name, runner.id)

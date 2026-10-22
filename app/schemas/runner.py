@@ -83,6 +83,8 @@ class RunnerRead(RunnerBase):
     last_screenshot_at: datetime | None = None
     has_screenshot: bool = False
 
+    deleted_at: datetime | None = None
+
 
 class RunnerListItem(OrkaBaseSchema):
     id: int

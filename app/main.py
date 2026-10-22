@@ -68,7 +68,8 @@ def seed_default_permissions() -> None:
 # Endpoints de alta frequência (workers/health): sem linha por request em INFO;
 # só DEBUG em sucesso e WARNING/ERROR para status >= 400.
 _HIGH_FREQUENCY_RE = re.compile(
-    r"/(health|worker/heartbeat|worker/tasks/next|worker/screenshot|worker/tasks/[^/]+/logs)/?$"
+    r"/(health|worker/heartbeat|worker/tasks/next|worker/screenshot|worker/tasks/[^/]+/logs"
+    r"|worker/runner-logs|runner-logs)/?$"
 )
 
 
