@@ -183,5 +183,43 @@ class GitVersionTests(unittest.TestCase):
         self.assertTrue(v3.in_use)
 
 
+class InUseAnnotationTests(unittest.TestCase):
+    """O selo "Em uso" da lista segue a mesma regra das tasks, sem uma consulta por bot."""
+
+    def test_matches_task_rule_with_few_queries(self):
+        from sqlalchemy import event
+
+        from app.models.bot_version import BotVersion
+
+        f = Fixture()
+        db = f.db
+        cases = []
+        for kind in ("so_ativas", "ultima_inativa", "fixada", "todas_inativas"):
+            auto, first = f.automation()
+            first.version = "1.0.0"
+            second = BotVersion(bot_id=auto.bot_id, storage_type="git", version="1.0.1",
+                                is_active=kind != "ultima_inativa", created_by=f.user.id)
+            db.add(second)
+            db.flush()
+            if kind == "fixada":
+                db.get(Bot, auto.bot_id).pinned_version_id = first.id
+            if kind == "todas_inativas":
+                first.is_active = False
+                second.is_active = False
+            cases.append(auto.bot_id)
+        db.commit()
+
+        executed = []
+        event.listen(db.get_bind(), "before_cursor_execute", lambda *a, **k: executed.append(1))
+        versions = BotVersionService(db).list()
+        self.assertLessEqual(len(executed), 3, "lista não pode fazer uma consulta por bot")
+
+        task_repo = TaskRepository(db)
+        for bot_id in cases:
+            expected = task_repo.get_latest_bot_version_for_bot(bot_id).id
+            in_use = [v.id for v in versions if v.bot_id == bot_id and v.in_use]
+            self.assertEqual(in_use, [expected], f"bot {bot_id}")
+
+
 if __name__ == "__main__":
     unittest.main()

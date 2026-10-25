@@ -10,7 +10,6 @@ from app.models.bot import Bot
 from app.models.bot_version import BotVersion
 from app.models.user import User
 from app.repositories.bot_version_repository import BotVersionRepository
-from app.repositories.task_repository import TaskRepository
 from app.services.git_repo_service import GitCommit, GitRepoService
 
 
@@ -45,16 +44,38 @@ class BotVersionService:
         self.repo = BotVersionRepository
 
     def _annotate(self, versions: list[BotVersion]) -> list[BotVersion]:
-        """Marca em cada versão se é a usada hoje (in_use) e se foi fixada por Release (pinned)."""
-        task_repo = TaskRepository(self.db)
-        in_use: dict[int, int | None] = {}
-        pinned: dict[int, int | None] = {}
+        """Marca em cada versão se é a usada hoje (in_use) e se foi fixada por Release (pinned).
 
-        for bot_id in {v.bot_id for v in versions}:
-            used = task_repo.get_latest_bot_version_for_bot(bot_id)
-            in_use[bot_id] = used.id if used else None
-            bot = self.db.get(Bot, bot_id)
-            pinned[bot_id] = bot.pinned_version_id if bot else None
+        Mesma regra de TaskRepository.get_latest_bot_version_for_bot (fixada > ativa mais nova >
+        mais nova), mas em 2 consultas para todos os bots: uma por bot deixava a lista lenta
+        (100+ consultas; estourava o tempo no Azure).
+        """
+        bot_ids = {v.bot_id for v in versions}
+        if not bot_ids:
+            return versions
+
+        pinned: dict[int, int | None] = dict(
+            self.db.query(Bot.id, Bot.pinned_version_id).filter(Bot.id.in_(bot_ids)).all()
+        )
+        ids_by_bot: dict[int, list[tuple[int, bool]]] = {}
+        for version_id, bot_id, is_active in (
+            self.db.query(BotVersion.id, BotVersion.bot_id, BotVersion.is_active)
+            .filter(BotVersion.bot_id.in_(bot_ids))
+            .all()
+        ):
+            ids_by_bot.setdefault(bot_id, []).append((version_id, bool(is_active)))
+
+        in_use: dict[int, int | None] = {}
+        for bot_id, rows in ids_by_bot.items():
+            all_ids = {version_id for version_id, _ in rows}
+            active_ids = [version_id for version_id, active in rows if active]
+            fixed = pinned.get(bot_id)
+            if fixed in all_ids:
+                in_use[bot_id] = fixed
+            elif active_ids:
+                in_use[bot_id] = max(active_ids)
+            else:
+                in_use[bot_id] = max(all_ids)
 
         for version in versions:
             version.in_use = in_use.get(version.bot_id) == version.id
