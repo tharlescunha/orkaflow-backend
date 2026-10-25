@@ -129,17 +129,23 @@ def _find_duplicate(db: Session, scope_type: str, scope_id: int, name: str, igno
     return db.scalars(stmt).first()
 
 
-def create_variable(db: Session, data: dict) -> EnvVariable:
-    scope_type = (data.get("scope_type") or "").strip().lower()
+def _resolve_scope(db: Session, raw_scope_type: str | None, raw_scope_id) -> tuple[str, int]:
+    scope_type = (raw_scope_type or "").strip().lower()
     if scope_type not in SCOPES:
         raise ValidationException("Escopo inválido: use global, bot, automation ou runner.")
 
-    scope_id = GLOBAL_SCOPE_ID if scope_type == "global" else data.get("scope_id")
+    scope_id = GLOBAL_SCOPE_ID if scope_type == "global" else raw_scope_id
     if scope_type != "global":
         if not scope_id:
             raise ValidationException("Escolha o alvo do escopo (bot, automação ou máquina).")
         if _scope_target_label(db, scope_type, int(scope_id)) is None:
             raise NotFoundException("O alvo do escopo não foi encontrado.")
+
+    return scope_type, int(scope_id)
+
+
+def create_variable(db: Session, data: dict) -> EnvVariable:
+    scope_type, scope_id = _resolve_scope(db, data.get("scope_type"), data.get("scope_id"))
 
     name = normalize_name(data.get("name", ""))
 
@@ -203,6 +209,78 @@ def update_variable(db: Session, var_id: int, data: dict) -> EnvVariable:
     db.commit()
     db.refresh(var)
     return var
+
+
+def import_variables(
+    db: Session,
+    scope_type: str,
+    scope_id: int | None,
+    items: list[dict],
+    overwrite: bool = False,
+) -> dict:
+    """
+    Importa várias variáveis (ex.: lidas de um arquivo .env) num escopo.
+
+    Cada item passa pelas mesmas regras do cadastro. Itens inválidos não impedem os demais;
+    o que já existe no escopo é ignorado, ou atualizado com `overwrite`. Uma única transação.
+    """
+    scope_type, scope_id = _resolve_scope(db, scope_type, scope_id)
+
+    results: list[dict] = []
+    seen: set[str] = set()
+    counts = {"created": 0, "updated": 0, "skipped": 0, "errors": 0}
+
+    def add(name: str, status: str, message: str | None = None):
+        counts[status if status != "error" else "errors"] += 1
+        results.append({"name": name, "status": status, "message": message})
+
+    for item in items:
+        raw_name = item.get("name") or ""
+        try:
+            name = normalize_name(raw_name)
+        except ValidationException as exc:
+            add(raw_name.strip() or "(vazio)", "error", exc.detail)
+            continue
+
+        if name in seen:
+            add(name, "error", "Nome repetido no arquivo: só a primeira ocorrência foi usada.")
+            continue
+        seen.add(name)
+
+        value = item.get("value") or ""
+        is_secret = bool(item.get("is_secret"))
+        if is_secret and not value:
+            add(name, "error", "Variável secreta sem valor.")
+            continue
+
+        stored = encrypt_credential_value(value) if is_secret else value
+        existing = _find_duplicate(db, scope_type, scope_id, name)
+
+        if existing is not None:
+            if not overwrite:
+                add(name, "skipped", "Já existe neste escopo (mantida).")
+                continue
+            existing.value = stored
+            existing.is_secret = is_secret
+            db.add(existing)
+            add(name, "updated")
+            continue
+
+        db.add(
+            EnvVariable(
+                name=name,
+                scope_type=scope_type,
+                scope_id=scope_id,
+                value=stored,
+                is_secret=is_secret,
+                description=None,
+                active=True,
+            )
+        )
+        add(name, "created")
+
+    db.commit()
+    return {**counts, "results": results}
 
 
 def delete_variable(db: Session, var_id: int) -> None:

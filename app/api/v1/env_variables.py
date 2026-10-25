@@ -7,6 +7,8 @@ from app.core.database import get_db
 from app.schemas.env_variable import (
     EnvVariableCreate,
     EnvVariableEffective,
+    EnvVariableImport,
+    EnvVariableImportResponse,
     EnvVariableRead,
     EnvVariableUpdate,
 )
@@ -43,6 +45,18 @@ def effective(
 @router.post("/", response_model=EnvVariableRead, status_code=status.HTTP_201_CREATED)
 def create_variable(payload: EnvVariableCreate, db: Session = Depends(get_db)):
     return service.to_read(db, service.create_variable(db, payload.model_dump()))
+
+
+@router.post("/import", response_model=EnvVariableImportResponse)
+def import_variables(payload: EnvVariableImport, db: Session = Depends(get_db)):
+    """Cria (ou atualiza, com overwrite) várias variáveis de uma vez, ex.: lidas de um .env."""
+    return service.import_variables(
+        db,
+        payload.scope_type,
+        payload.scope_id,
+        [item.model_dump() for item in payload.variables],
+        overwrite=payload.overwrite,
+    )
 
 
 @router.put("/{var_id}", response_model=EnvVariableRead)

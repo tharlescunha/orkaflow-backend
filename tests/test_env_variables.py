@@ -30,6 +30,50 @@ class EnvBase(unittest.TestCase):
         return {row["name"]: row for row in rows}
 
 
+class ImportTests(EnvBase):
+    def run_import(self, items, scope="global", scope_id=None, overwrite=False):
+        return svc.import_variables(self.db, scope, scope_id, items, overwrite=overwrite)
+
+    def test_creates_valid_and_reports_invalid_and_duplicates(self):
+        result = self.run_import([
+            {"name": "sap_url", "value": "https://sap"},
+            {"name": "SENHA_SAP", "value": "s3cr3t", "is_secret": True},
+            {"name": "1INVALIDO", "value": "x"},
+            {"name": "PATH", "value": "x"},
+            {"name": "SAP_URL", "value": "repetida"},
+            {"name": "TOKEN_VAZIO", "value": "", "is_secret": True},
+        ])
+
+        self.assertEqual((result["created"], result["errors"]), (2, 4))
+        statuses = [(r["name"], r["status"]) for r in result["results"]]
+        self.assertEqual(statuses[0], ("SAP_URL", "created"))
+        self.assertEqual(statuses[1], ("SENHA_SAP", "created"))
+        self.assertEqual(statuses[4], ("SAP_URL", "error"), "repetida no arquivo: vale a primeira")
+
+        stored = {v.name: v for v in svc.list_variables(self.db, "global")}
+        self.assertEqual(stored["SAP_URL"].value, "https://sap")
+        self.assertNotEqual(stored["SENHA_SAP"].value, "s3cr3t", "segredo fica criptografado")
+        self.assertIsNone(svc.to_read(self.db, stored["SENHA_SAP"])["value"])
+
+    def test_existing_are_kept_unless_overwrite(self):
+        self.add("DESK_URL", "antigo")
+
+        kept = self.run_import([{"name": "DESK_URL", "value": "novo"}])
+        self.assertEqual((kept["skipped"], kept["updated"]), (1, 0))
+        self.assertEqual(svc.list_variables(self.db, "global")[0].value, "antigo")
+
+        replaced = self.run_import([{"name": "DESK_URL", "value": "novo"}], overwrite=True)
+        self.assertEqual(replaced["updated"], 1)
+        self.assertEqual(svc.list_variables(self.db, "global")[0].value, "novo")
+
+    def test_import_into_bot_scope_and_bad_target(self):
+        result = self.run_import([{"name": "FILIAL", "value": "001"}], scope="bot", scope_id=self.auto.bot_id)
+        self.assertEqual(result["created"], 1)
+        self.assertEqual(self.effective()["FILIAL"]["scope_type"], "bot")
+        with self.assertRaises(NotFoundException):
+            self.run_import([{"name": "X", "value": "1"}], scope="runner", scope_id=9999)
+
+
 class NameAndScopeValidationTests(EnvBase):
     def test_name_is_uppercased_and_validated(self):
         self.assertEqual(self.add("sap_url", "x").name, "SAP_URL")
