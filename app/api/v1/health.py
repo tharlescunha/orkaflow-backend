@@ -41,17 +41,24 @@ def health_check():
         except Exception:
             pass
 
-    try:
-        background = get_services_status()
-    except Exception as exc:  # leitura de heartbeat nunca deve quebrar o endpoint
-        background = {"services": {}, "supervisor": None, "error": type(exc).__name__}
+    # Cópia "só painel" (HEALTH_CHECK_BACKGROUND_WORKERS=false): os processos de fundo rodam
+    # em outro servidor; aqui só o banco conta.
+    check_background = settings.health_check_background_workers
+
+    if check_background:
+        try:
+            background = get_services_status()
+        except Exception as exc:  # leitura de heartbeat nunca deve quebrar o endpoint
+            background = {"services": {}, "supervisor": None, "error": type(exc).__name__}
+    else:
+        background = {"services": {}, "supervisor": None}
 
     services = background["services"]
     statuses = [s["status"] for s in services.values()]
 
     if db_status != "ok" or "stale" in statuses:
         overall, http_status = "unhealthy", 503
-    elif not services or "unknown" in statuses:
+    elif check_background and (not services or "unknown" in statuses):
         overall, http_status = "degraded", 200
     else:
         overall, http_status = "ok", 200
@@ -61,6 +68,7 @@ def health_check():
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "app_name": settings.app_name,
         "environment": settings.app_env,
+        "mode": "full" if check_background else "panel_only",
         "database": db_status,
         "components": {
             "database": {"status": db_status, **({"error": db_error} if db_error else {})},

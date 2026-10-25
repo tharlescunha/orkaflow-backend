@@ -48,6 +48,22 @@ class Settings(BaseSettings):
     # Tela de Logs: dias que as linhas do worker.log das máquinas ficam no banco.
     runner_log_retention_days: int = Field(3, ge=1, alias="RUNNER_LOG_RETENTION_DAYS")
 
+    # Origens do front que podem chamar a API (separadas por vírgula).
+    cors_origins: str = Field(
+        "http://localhost:5173,http://127.0.0.1:5173,http://10.50.156.202:5173",
+        alias="CORS_ORIGINS",
+    )
+
+    # Cópia "só painel" (ex.: Azure): nenhuma máquina conecta nela, então as rotas
+    # /worker/* ficam desligadas e o /health não espera os processos de fundo
+    # (agendador, dispatcher, watchdog e notificações rodam só no servidor principal).
+    enable_worker_api: bool = Field(True, alias="ENABLE_WORKER_API")
+    health_check_background_workers: bool = Field(True, alias="HEALTH_CHECK_BACKGROUND_WORKERS")
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [origin.strip().rstrip("/") for origin in self.cors_origins.split(",") if origin.strip()]
+
     @property
     def database_url(self) -> str:
         user = quote_plus(self.db_user)

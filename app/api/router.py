@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends
 
 from app.api.deps import get_current_user
+from app.core.config import settings
 
 from app.api.v1.health import router as health_router
 from app.api.v1.auth import router as auth_router
@@ -94,5 +95,7 @@ worker_router.include_router(worker_runner_logs_router)
 # (include_router copia as rotas no momento da chamada).
 api_router.include_router(public_router)
 api_router.include_router(protected_router)
-api_router.include_router(worker_router)
+# Rotas das máquinas (worker): desligáveis na cópia "só painel" (ENABLE_WORKER_API=false).
+if settings.enable_worker_api:
+    api_router.include_router(worker_router)
 api_router.include_router(profiles_router)
