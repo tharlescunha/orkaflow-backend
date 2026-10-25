@@ -75,6 +75,16 @@ class BotRepository:
             if row.bot_id not in versions:
                 versions[row.bot_id] = row.version
 
+        # "Versão atual" mostra a fixada por Release, quando houver.
+        pinned_rows = (
+            db.query(BotVersion.bot_id, BotVersion.version)
+            .join(Bot, Bot.pinned_version_id == BotVersion.id)
+            .filter(Bot.id.in_(bot_ids), BotVersion.bot_id == Bot.id)
+            .all()
+        )
+        for row in pinned_rows:
+            versions[row.bot_id] = row.version
+
         return versions
 
     @staticmethod

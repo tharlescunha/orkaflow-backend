@@ -550,7 +550,10 @@ class WorkerService:
                     "checksum": active_version.checksum if active_version else None,
                     "execution_mode": normalize_mode(bot.execution_mode),
                     # Flag do próprio bot (coluna bots.auto_update, junho/2026).
-                    "auto_update": bool(getattr(bot, "auto_update", False)),
+                    # Com versão fixada por Release o worker NÃO pode puxar a branch: ele faz
+                    # checkout do commit da versão (comportamento atual sem auto_update).
+                    "auto_update": bool(getattr(bot, "auto_update", False))
+                    and getattr(bot, "pinned_version_id", None) is None,
                 }
             )
             added_bot_ids.add(bot.id)

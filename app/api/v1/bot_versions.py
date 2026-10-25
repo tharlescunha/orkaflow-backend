@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.schemas.bot_version import (
     BotVersionCreate,
+    BotVersionGitPreview,
     BotVersionResponse,
     BotVersionUpdate,
 )
@@ -17,6 +18,21 @@ router = APIRouter(prefix="/bot-versions", tags=["Bot Versions"])
 def list_bot_versions(db: Session = Depends(get_db)):
     service = BotVersionService(db)
     return service.list()
+
+
+# Rota estática antes da parametrizada (/{bot_version_id}).
+@router.get("/git-preview", response_model=BotVersionGitPreview)
+def git_preview(bot_id: int = Query(...), db: Session = Depends(get_db)):
+    """Lê o Git do bot e sugere a nova versão (número, commit, changelog). Não grava nada."""
+    service = BotVersionService(db)
+    return service.git_preview(bot_id)
+
+
+@router.post("/{bot_version_id}/release", response_model=BotVersionResponse)
+def release_bot_version(bot_version_id: int, db: Session = Depends(get_db)):
+    """Passa a executar esta versão (voltar/avançar). Na mais nova, volta a seguir a mais nova."""
+    service = BotVersionService(db)
+    return service.release(bot_version_id)
 
 
 @router.get("/{bot_version_id}", response_model=BotVersionResponse)

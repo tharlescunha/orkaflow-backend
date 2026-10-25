@@ -173,7 +173,14 @@ class TaskRepository:
         """Versão que deve ser usada pelo bot: a ativa mais recente; senão a última criada.
 
         Usada tanto na criação de tasks quanto no sync do worker (mesma versão).
+        A versão fixada por "Release" (bots.pinned_version_id) tem prioridade.
         """
+        bot = self.db.get(Bot, bot_id)
+        if bot is not None and bot.pinned_version_id is not None:
+            pinned = self.db.get(BotVersion, bot.pinned_version_id)
+            if pinned is not None and pinned.bot_id == bot_id:
+                return pinned
+
         active_stmt = (
             select(BotVersion)
             .where(BotVersion.bot_id == bot_id)

@@ -47,6 +47,11 @@ class Bot(Base, BaseModelMixin, TimestampMixin):
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
     auto_update: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
+    # "Release": versão escolhida pelo usuário para executar (voltar/avançar).
+    # Nula = segue a mais nova. Sem FK de propósito: bots <-> bot_versions em
+    # ciclo daria "multiple cascade paths" no SQL Server; o service valida.
+    pinned_version_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+
     repository = relationship("Repository", back_populates="bots")
     versions = relationship("BotVersion", back_populates="bot")
     automations = relationship("Automation", back_populates="bot")
