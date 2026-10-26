@@ -16,6 +16,8 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.exceptions import NotFoundException, ValidationException
+from app.mcp import api_bridge
+from app.mcp.playbooks import PLAYBOOKS, como_fazer
 from app.domain.enums import TaskStatus
 from app.models.automation import Automation
 from app.models.bot import Bot
@@ -42,9 +44,11 @@ class Tool:
     title: str
     description: str
     input_schema: dict
-    handler: Callable[[Session, User, dict], Any]
+    # Síncronas: (db, user, args). Com is_async: (request, args), rodam no loop e chamam a API por dentro.
+    handler: Callable[..., Any]
     read_only: bool = True
     destructive: bool = False
+    is_async: bool = False
 
 
 # ------------------------------------------------------------------ helpers
@@ -577,6 +581,35 @@ TOOLS: list[Tool] = [
          _schema({"bot": {"type": "string", "description": "Id ou nome do bot."},
                   "versao": {"type": "string", "description": "Número da versão (padrão: o sugerido)."}}, ["bot"]),
          criar_versao_bot, read_only=False),
+    # --- Tudo o mais que o painel faz: guia + acesso às rotas da API.
+    Tool("como_fazer", "Como fazer (guia passo a passo)",
+         "Roteiro de cada assunto do OrkaFlow: quais rotas usar e em que ordem. Comece por aqui para cadastrar ou "
+         "alterar bot, versão, automação, vínculo de máquina, agendamento, variável, credencial ou notificação. "
+         "Sem 'assunto' devolve a visão geral e a lista de assuntos.",
+         _schema({"assunto": {"type": "string", "enum": ["geral", *sorted(PLAYBOOKS)],
+                              "description": "Assunto do roteiro."}}),
+         lambda db, user, args: como_fazer(args.get("assunto"))),
+    Tool("buscar_rotas", "Buscar rotas da API",
+         "Acha a rota da API para o que precisa ser feito (busca em português nas explicações). Sem argumentos lista "
+         "os grupos. Depois use detalhe_rota.",
+         _schema({"busca": {"type": "string", "description": "Palavras, ex.: 'vincular maquina automacao'."},
+                  "grupo": {"type": "string", "description": "Nome do grupo, ex.: Automations, Schedules."}}),
+         api_bridge.buscar_rotas, is_async=True),
+    Tool("detalhe_rota", "Detalhe de uma rota da API",
+         "Explicação completa de uma rota: o que faz, regras, parâmetros, campos do corpo (obrigatórios, tipos, "
+         "valores aceitos) e exemplos. Use antes de chamar_api.",
+         _schema({"rota": {"type": "string", "description": "Ex.: \"POST /api/v1/schedules/\"."}}, ["rota"]),
+         api_bridge.detalhe_rota, is_async=True),
+    Tool("chamar_api", "Executar uma rota da API",
+         "Executa qualquer rota do painel (consultar, cadastrar, alterar, ativar/desativar, apagar) com as permissões "
+         "do dono do token. Para POST/PUT/PATCH/DELETE mostre ao usuário o que será enviado e espere a confirmação. "
+         "Devolve status HTTP e a resposta; em erro, o 'detail' explica o que corrigir.",
+         _schema({"metodo": {"type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
+                  "caminho": {"type": "string", "description": "Caminho com os ids, ex.: /api/v1/automations/12/runners."},
+                  "query": {"type": "object", "description": "Filtros da URL, ex.: {\"automation_id\": 12}."},
+                  "corpo": {"description": "Corpo JSON (objeto ou lista) para POST/PUT/PATCH."}},
+                 ["metodo", "caminho"]),
+         api_bridge.chamar_api, read_only=False, destructive=True, is_async=True),
 ]
 
 TOOLS_BY_NAME = {tool.name: tool for tool in TOOLS}

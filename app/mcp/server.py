@@ -7,6 +7,7 @@ Métodos: initialize, notifications/*, ping, tools/list, tools/call.
 """
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 from typing import Any
@@ -28,12 +29,19 @@ router = APIRouter(tags=["MCP"])
 SUPPORTED_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 SERVER_INFO = {"name": "orkaflow", "title": "OrkaFlow - orquestrador de robôs", "version": "1.0.0"}
 INSTRUCTIONS = (
-    "Ferramentas do OrkaFlow, o orquestrador de robôs RPA da ALZ Grãos. "
-    "Use listar_automacoes/listar_maquinas para descobrir nomes e ids antes de agir. "
-    "Status das tasks: waiting/ready (na fila), running (rodando), finished (sucesso), "
-    "error/timeout/forced_stop (falha), canceled. Horários estão no horário de Brasília. "
-    "Antes de ações (criar_task, parar_task, pausar/reativar agendamento, criar_versao_bot), "
-    "confirme com o usuário o que será feito."
+    "Ferramentas do OrkaFlow, o orquestrador de robôs RPA da ALZ Grãos. Você pode consultar e operar tudo que o "
+    "painel faz (operação, máquinas, bots, versões, automações, agendamentos, variáveis, credenciais, notificações).\n"
+    "- Dia a dia: use as ferramentas prontas (resumo_do_dia, ultimas_execucoes, detalhe_task, listar_maquinas, "
+    "status_maquina, listar_agendamentos, criar_task, parar_task, criar_versao_bot...). Descubra nomes e ids com "
+    "listar_automacoes/listar_maquinas antes de agir.\n"
+    "- Cadastrar ou alterar qualquer coisa: como_fazer(assunto) para o roteiro, buscar_rotas para achar a rota, "
+    "detalhe_rota para os campos obrigatórios e exemplo, e chamar_api para executar.\n"
+    "- Antes de qualquer ação (criar, alterar, parar, pausar, apagar) mostre ao usuário o que será feito e espere a "
+    "confirmação. Prefira desativar a apagar.\n"
+    "- Status das tasks: waiting/ready (na fila), scheduled, running, stop_requested, finished (sucesso), "
+    "error/timeout/forced_stop (falha), canceled. As ferramentas prontas mostram horário de Brasília; chamar_api "
+    "devolve UTC.\n"
+    "- Valores de credenciais nunca são mostrados; não peça nem repita senhas além do necessário para gravá-las."
 )
 
 PARSE_ERROR = -32700
@@ -77,7 +85,7 @@ def _tool_list() -> list[dict]:
     ]
 
 
-def _call_tool(db: Session, user, params: dict) -> dict:
+def _tool_and_arguments(params: dict):
     name = params.get("name")
     tool = TOOLS_BY_NAME.get(name)
     if tool is None:
@@ -85,25 +93,67 @@ def _call_tool(db: Session, user, params: dict) -> dict:
     arguments = params.get("arguments") or {}
     if not isinstance(arguments, dict):
         raise ValueError("arguments precisa ser um objeto.")
+    return tool, arguments
 
+
+def _tool_error(message: str) -> dict:
+    return {"content": [{"type": "text", "text": message}], "isError": True}
+
+
+def _tool_result(data) -> dict:
+    payload = jsonable_encoder(data)
+    # chamar_api devolve ok=false quando a rota respondeu 4xx/5xx: a IA precisa ver como erro.
+    failed = isinstance(payload, dict) and payload.get("ok") is False
+    return {
+        "content": [{"type": "text", "text": json.dumps(payload, ensure_ascii=False, indent=2)}],
+        "structuredContent": payload if isinstance(payload, dict) else {"resultado": payload},
+        "isError": failed,
+    }
+
+
+def _call_tool(db: Session, user, params: dict) -> dict:
+    tool, arguments = _tool_and_arguments(params)
+    if tool.is_async:
+        raise ValueError(f"{tool.name} só pode ser chamada pelo endpoint /mcp.")
     try:
         data = tool.handler(db, user, arguments)
     except HTTPException as exc:
         # Erros de negócio (não encontrado, validação...) voltam para a IA como resultado com erro,
         # para ela poder corrigir a chamada.
         db.rollback()
-        return {"content": [{"type": "text", "text": str(exc.detail)}], "isError": True}
+        return _tool_error(str(exc.detail))
     except Exception as exc:  # noqa: BLE001
         db.rollback()
-        logger.exception("Erro na ferramenta MCP %s", name)
-        return {"content": [{"type": "text", "text": f"Erro interno ao executar {name}: {type(exc).__name__}"}], "isError": True}
+        logger.exception("Erro na ferramenta MCP %s", tool.name)
+        return _tool_error(f"Erro interno ao executar {tool.name}: {type(exc).__name__}")
+    return _tool_result(data)
 
-    payload = jsonable_encoder(data)
-    return {
-        "content": [{"type": "text", "text": json.dumps(payload, ensure_ascii=False, indent=2)}],
-        "structuredContent": payload if isinstance(payload, dict) else {"resultado": payload},
-        "isError": False,
-    }
+
+async def _call_async_tool(request: Request, tool, arguments: dict) -> dict:
+    try:
+        data = tool.handler(request, arguments)
+        if inspect.isawaitable(data):
+            data = await data
+    except HTTPException as exc:
+        return _tool_error(str(exc.detail))
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Erro na ferramenta MCP %s", tool.name)
+        return _tool_error(f"Erro interno ao executar {tool.name}: {type(exc).__name__}")
+    return _tool_result(data)
+
+
+async def _dispatch(message: Any, request: Request, db: Session, user) -> dict | None:
+    """Ferramentas assíncronas (que chamam a API por dentro) rodam no loop; o resto, fora dele."""
+    if isinstance(message, dict) and message.get("method") == "tools/call" and "id" in message:
+        params = message.get("params") or {}
+        tool = TOOLS_BY_NAME.get(params.get("name")) if isinstance(params, dict) else None
+        if tool is not None and tool.is_async:
+            try:
+                _, arguments = _tool_and_arguments(params)
+            except ValueError as exc:
+                return _error(message.get("id"), INVALID_PARAMS, str(exc))
+            return _result(message.get("id"), await _call_async_tool(request, tool, arguments))
+    return await run_in_threadpool(_handle, message, db, user)
 
 
 def _handle(message: Any, db: Session, user) -> dict | None:
@@ -165,11 +215,11 @@ async def mcp_endpoint(request: Request, db: Session = Depends(get_db)):
 
     # As ferramentas usam o banco de forma síncrona: roda fora do loop para não travar a API.
     if isinstance(body, list):
-        handled = [await run_in_threadpool(_handle, m, db, user) for m in body]
+        handled = [await _dispatch(m, request, db, user) for m in body]
         responses = [r for r in handled if r is not None]
         return JSONResponse(responses) if responses else Response(status_code=202)
 
-    response = await run_in_threadpool(_handle, body, db, user)
+    response = await _dispatch(body, request, db, user)
     if response is None:
         return Response(status_code=202)
     return JSONResponse(response)
