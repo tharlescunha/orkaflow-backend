@@ -57,7 +57,8 @@ class RunnerService:
                 "has_running_task": running_tasks_count > 0,
                 "linked_bots_count": linked_bots_count,
                 "last_screenshot_at": runner.last_screenshot_at,
-                "has_screenshot": runner.last_screenshot_image is not None,
+                # Pelo horário, para não carregar a imagem (deferred) em cada runner da lista.
+                "has_screenshot": runner.last_screenshot_at is not None,
                 "deleted_at": runner.deleted_at,
             }
         )

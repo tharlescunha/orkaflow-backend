@@ -182,31 +182,17 @@ class AutomationHealthService:
 
     @staticmethod
     def _load_last_tasks(db: Session, automation_ids: list[int]) -> list[Task]:
-        ranked_tasks = (
-            select(
-                Task.id.label("task_id"),
-                func.row_number()
-                .over(
-                    partition_by=Task.automation_id,
-                    order_by=(
-                        Task.created_at.desc(),
-                        Task.id.desc(),
-                    ),
-                )
-                .label("row_number"),
-            )
+        # Última task de cada automação = maior id (ids crescem com a criação). O ROW_NUMBER
+        # sobre todas as tasks levava ~7 s com 38k linhas; MAX(id) por automação usa o índice.
+        latest_ids = (
+            select(func.max(Task.id))
             .where(Task.automation_id.in_(automation_ids))
-            .subquery()
+            .group_by(Task.automation_id)
         )
-
         return (
             db.query(Task)
             .options(joinedload(Task.runner))
-            .join(
-                ranked_tasks,
-                Task.id == ranked_tasks.c.task_id,
-            )
-            .filter(ranked_tasks.c.row_number == 1)
+            .filter(Task.id.in_(latest_ids))
             .all()
         )
 
@@ -230,11 +216,12 @@ class AutomationHealthService:
         now_utc: datetime,
     ) -> ExpectedWindowResult:
         if not schedule:
+            # Só manual: não existe horário esperado, então nunca está "atrasada".
             return ExpectedWindowResult(
                 expected_interval_seconds=None,
-                rule_label="No schedule",
-                reference_time=None,
-                is_overdue=True,
+                rule_label="Manual (sem agendamento)",
+                reference_time=AutomationHealthService._get_reference_time(task, None),
+                is_overdue=False,
             )
 
         if not schedule.active or schedule.status in {ScheduleStatus.INACTIVE, ScheduleStatus.PAUSED}:

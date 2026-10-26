@@ -10,7 +10,7 @@ from app.models.task import Task
 from app.models.bot import Bot
 from app.services.task_rules import EXECUTING_STATUSES
 from datetime import UTC, datetime
-from sqlalchemy import case, func, select, distinct
+from sqlalchemy import case, func, select, distinct, text
 
 class RunnerRepository:
     def __init__(self, db: Session):
@@ -119,6 +119,7 @@ class RunnerRepository:
         runner.enabled = False
         runner.status = RunnerStatus.OFFLINE
         runner.last_screenshot_image = None
+        runner.last_screenshot_at = None
 
         self.db.add(runner)
         self.db.commit()
@@ -313,7 +314,8 @@ class RunnerRepository:
         if automation_id is not None:
             stmt = stmt.where(Task.automation_id == automation_id)
 
-        return self.db.execute(stmt).scalars().first()
+        # .first() do Result não limita a query: sem o limit(1) vinham todas as tasks da máquina.
+        return self.db.execute(stmt.limit(1)).scalars().first()
 
     def get_oldest_waiting_task(
         self,
@@ -331,7 +333,7 @@ class RunnerRepository:
         if automation_id is not None:
             stmt = stmt.where(Task.automation_id == automation_id)
 
-        return self.db.execute(stmt).scalars().first()
+        return self.db.execute(stmt.limit(1)).scalars().first()
 
     def get_total_execution_seconds(
         self,
@@ -361,8 +363,22 @@ class RunnerRepository:
             stmt = stmt.where(Task.automation_id == automation_id)
 
         now = datetime.now(UTC)
-        total = 0
 
+        if self.db.get_bind().dialect.name == "mssql":
+            # Soma no banco: trazer todas as tasks da máquina para somar em Python levava ~1 s por máquina.
+            filters = stmt.whereclause
+            # Milissegundos divididos por linha (divisão inteira): igual ao int() por task da versão em Python.
+            finished_total = self.db.execute(
+                select(func.coalesce(func.sum(func.datediff_big(text("millisecond"), Task.started_at, Task.finished_at) // 1000), 0))
+                .where(filters, Task.finished_at.is_not(None))
+            ).scalar_one()
+            running_started = self.db.execute(
+                select(Task.started_at).where(filters, Task.finished_at.is_(None), Task.status == TaskStatus.RUNNING)
+            ).scalars().all()
+            running_total = sum(int((now - started_at).total_seconds()) for started_at in running_started if started_at)
+            return int(finished_total) + running_total
+
+        total = 0
         for started_at, finished_at, task_status in self.db.execute(stmt).all():
             if started_at and finished_at:
                 total += int((finished_at - started_at).total_seconds())

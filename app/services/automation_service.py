@@ -1,6 +1,14 @@
-from sqlalchemy.orm import Session, object_session
+from dataclasses import dataclass, field
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session, object_session, selectinload
 
 from app.core.exceptions import ConflictException, NotFoundException, ValidationException
+from app.models.automation_exclusive_group import (
+    AutomationExclusiveGroup,
+    AutomationExclusiveGroupMember,
+)
+from app.models.automation_success_trigger import AutomationSuccessTrigger
 from app.models.bot import Bot
 from app.models.repository import Repository
 from app.repositories.automation_exclusive_group_repository import (
@@ -12,9 +20,18 @@ from app.repositories.automation_success_trigger_repository import (
 )
 
 
+@dataclass
+class _Related:
+    groups_by_automation: dict[int, list] = field(default_factory=dict)
+    members_by_group: dict[int, list[int]] = field(default_factory=dict)
+    triggers_by_automation: dict[int, list] = field(default_factory=dict)
+
+
 class AutomationService:
     @staticmethod
-    def _serialize_exclusive_group(group):
+    def _serialize_exclusive_group(group, automation_ids: list[int] | None = None):
+        if automation_ids is None:
+            automation_ids = [link.automation_id for link in getattr(group, "automation_links", [])]
         return {
             "id": group.id,
             "name": group.name,
@@ -22,9 +39,7 @@ class AutomationService:
             "description": group.description,
             "capacity": group.capacity,
             "active": group.active,
-            "automation_ids": [
-                link.automation_id for link in getattr(group, "automation_links", [])
-            ],
+            "automation_ids": automation_ids,
             "created_at": group.created_at,
             "updated_at": group.updated_at,
         }
@@ -45,21 +60,53 @@ class AutomationService:
         }
 
     @staticmethod
-    def _serialize(automation):
+    def _load_related(db: Session, automation_ids: list[int]) -> "_Related":
+        """Grupos exclusivos e gatilhos de várias automações em 3 queries (em vez de 2 por automação)."""
+        related = _Related()
+        if not automation_ids:
+            return related
+
+        membership_rows = db.execute(
+            select(AutomationExclusiveGroupMember.automation_id, AutomationExclusiveGroup)
+            .join(AutomationExclusiveGroup, AutomationExclusiveGroup.id == AutomationExclusiveGroupMember.group_id)
+            .where(AutomationExclusiveGroupMember.automation_id.in_(automation_ids))
+            .order_by(AutomationExclusiveGroup.name.asc())
+        ).all()
+        for automation_id, group in membership_rows:
+            related.groups_by_automation.setdefault(automation_id, []).append(group)
+
+        group_ids = sorted({group.id for _, group in membership_rows})
+        if group_ids:
+            for group_id, automation_id in db.execute(
+                select(AutomationExclusiveGroupMember.group_id, AutomationExclusiveGroupMember.automation_id)
+                .where(AutomationExclusiveGroupMember.group_id.in_(group_ids))
+                .order_by(AutomationExclusiveGroupMember.id.asc())
+            ).all():
+                related.members_by_group.setdefault(group_id, []).append(automation_id)
+
+        triggers = db.execute(
+            select(AutomationSuccessTrigger)
+            .options(selectinload(AutomationSuccessTrigger.target_automation))
+            .where(
+                AutomationSuccessTrigger.source_automation_id.in_(automation_ids),
+                AutomationSuccessTrigger.active == True,  # noqa: E712
+            )
+            .order_by(
+                AutomationSuccessTrigger.priority_override.desc(),
+                AutomationSuccessTrigger.id.asc(),
+            )
+        ).scalars().all()
+        for trigger in triggers:
+            related.triggers_by_automation.setdefault(trigger.source_automation_id, []).append(trigger)
+        return related
+
+    @staticmethod
+    def _serialize(automation, related: "_Related | None" = None):
         db = object_session(automation)
-        exclusive_groups = []
-        if db is not None:
-            exclusive_groups = AutomationExclusiveGroupRepository.list_for_automation(
-                db,
-                automation.id,
-            )
-            success_triggers = AutomationSuccessTriggerRepository.list_for_source(
-                db,
-                automation.id,
-                active=True,
-            )
-        else:
-            success_triggers = []
+        if related is None:
+            related = AutomationService._load_related(db, [automation.id]) if db is not None else _Related()
+        exclusive_groups = related.groups_by_automation.get(automation.id, [])
+        success_triggers = related.triggers_by_automation.get(automation.id, [])
         return {
             "id": automation.id,
             "name": automation.name,
@@ -81,7 +128,7 @@ class AutomationService:
             "default_runtime_parameters_json": getattr(automation, "default_runtime_parameters_json", None),
             "exclusive_group_ids": [group.id for group in exclusive_groups],
             "exclusive_groups": [
-                AutomationService._serialize_exclusive_group(group)
+                AutomationService._serialize_exclusive_group(group, related.members_by_group.get(group.id, []))
                 for group in exclusive_groups
             ],
             "success_trigger_automation_ids": [
@@ -165,7 +212,8 @@ class AutomationService:
             repository_id=repository_id,
             bot_id=bot_id,
         )
-        return [AutomationService._serialize(item) for item in automations]
+        related = AutomationService._load_related(db, [item.id for item in automations])
+        return [AutomationService._serialize(item, related) for item in automations]
 
     @staticmethod
     def get(db: Session, automation_id: int):

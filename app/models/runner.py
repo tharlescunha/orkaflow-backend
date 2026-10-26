@@ -55,10 +55,12 @@ class Runner(Base, BaseModelMixin, TimestampMixin):
         index=True,
     )
 
-    # Último print de tela enviado pelo worker
+    # Último print de tela enviado pelo worker. deferred: só sai do banco quando a rota do print
+    # pede (0,7 MB por linha; vinha junto em toda task/health/dashboard que carregava o runner).
     last_screenshot_image: Mapped[bytes | None] = mapped_column(
         LargeBinary,
         nullable=True,
+        deferred=True,
     )
 
     # Horário do último print recebido
