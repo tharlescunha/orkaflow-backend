@@ -58,6 +58,13 @@ class Settings(BaseSettings):
     # /worker/* ficam desligadas e o /health não espera os processos de fundo
     # (agendador, dispatcher, watchdog e notificações rodam só no servidor principal).
     enable_worker_api: bool = Field(True, alias="ENABLE_WORKER_API")
+
+    # /docs, /redoc e /openapi.json públicos (sem login). Desligado: a documentação fica
+    # na aba Integração do painel (GET /api/v1/integration/openapi, exige login).
+    enable_public_docs: bool = Field(False, alias="ENABLE_PUBLIC_DOCS")
+
+    # Servidor MCP (POST /mcp) para IAs, autenticado com token de integração.
+    enable_mcp: bool = Field(True, alias="ENABLE_MCP")
     health_check_background_workers: bool = Field(True, alias="HEALTH_CHECK_BACKGROUND_WORKERS")
 
     @property

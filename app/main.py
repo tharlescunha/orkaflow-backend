@@ -31,6 +31,10 @@ app = FastAPI(
     version="1.0.0",
     debug=settings.app_debug,
     lifespan=lifespan,
+    # Documentação pública só com ENABLE_PUBLIC_DOCS=true; o normal é ver na aba Integração.
+    docs_url="/docs" if settings.enable_public_docs else None,
+    redoc_url="/redoc" if settings.enable_public_docs else None,
+    openapi_url="/openapi.json" if settings.enable_public_docs else None,
 )
 
 # ==========================================================
@@ -119,3 +123,9 @@ async def generic_exception_handler(request: Request, exc: Exception):
 # ROUTES
 # ==========================================================
 app.include_router(api_router, prefix=settings.api_prefix)
+
+# MCP para IAs (POST /mcp, autenticado com token de integração). ENABLE_MCP=false desliga.
+if settings.enable_mcp:
+    from app.mcp.server import router as mcp_router
+
+    app.include_router(mcp_router)

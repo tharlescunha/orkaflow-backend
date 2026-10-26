@@ -9,34 +9,40 @@ from app.core.exceptions import ForbiddenException, UnauthorizedException
 from app.core.security import decode_token
 from app.models.user import User
 from app.repositories.user_repository import UserRepository
+from app.services import api_token_service
 
 
 bearer_scheme = HTTPBearer(
     auto_error=True,
     bearerFormat="JWT",
-    description="Informe o token no header Authorization no formato: Bearer <seu_access_token>",
+    description=(
+        "Informe o token no header Authorization: Bearer <access_token do login> "
+        "ou Bearer <token de integração ork_...>"
+    ),
 )
 
 
-def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
-    db: Session = Depends(get_db),
-) -> User:
-    token = credentials.credentials
+def user_from_token(token: str, db: Session) -> User:
+    """Usuário de um token de login (JWT) ou de integração (ork_...), com as mesmas checagens."""
+    if api_token_service.is_api_token(token):
+        user = api_token_service.authenticate(db, token)
+        if user is None:
+            raise UnauthorizedException("Token de integração inválido, revogado ou expirado.")
+    else:
+        try:
+            payload = decode_token(token)
+        except ValueError as exc:
+            raise UnauthorizedException(str(exc)) from exc
 
-    try:
-        payload = decode_token(token)
-    except ValueError as exc:
-        raise UnauthorizedException(str(exc)) from exc
+        if payload.get("type") != "access":
+            raise UnauthorizedException("Token de acesso inválido.")
 
-    if payload.get("type") != "access":
-        raise UnauthorizedException("Token de acesso inválido.")
+        user_id = payload.get("sub")
+        if not user_id:
+            raise UnauthorizedException("Token inválido.")
 
-    user_id = payload.get("sub")
-    if not user_id:
-        raise UnauthorizedException("Token inválido.")
+        user = UserRepository(db).get_by_id(int(user_id))
 
-    user = UserRepository(db).get_by_id(int(user_id))
     if not user:
         raise UnauthorizedException("Usuário não encontrado.")
 
@@ -47,6 +53,13 @@ def get_current_user(
         raise ForbiddenException("O perfil vinculado ao usuário está inativo.")
 
     return user
+
+
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    db: Session = Depends(get_db),
+) -> User:
+    return user_from_token(credentials.credentials, db)
 
 
 def _is_legacy_admin(user: User) -> bool:

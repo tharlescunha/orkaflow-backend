@@ -34,6 +34,9 @@ from app.api.v1.permissions import router as permissions_router
 from app.api.v1.notifications import router as notifications_router
 from app.api.v1.env_variables import router as env_variables_router
 from app.api.v1.runner_logs import router as runner_logs_router
+from app.api.v1.integration import router as integration_router
+from app.api.v1.api_tokens import admin_router as user_api_tokens_router
+from app.api.v1.api_tokens import router as api_tokens_router
 from app.api.v1.worker_runner_logs import router as worker_runner_logs_router
 
 from app.api.v1.worker_telemetry import router as worker_telemetry_router
@@ -73,6 +76,9 @@ protected_router.include_router(permissions_router)
 protected_router.include_router(notifications_router)
 protected_router.include_router(env_variables_router)
 protected_router.include_router(runner_logs_router)
+protected_router.include_router(integration_router)
+protected_router.include_router(api_tokens_router)
+protected_router.include_router(user_api_tokens_router)
 
 worker_router = APIRouter()
 worker_router.include_router(worker_registration_router)
