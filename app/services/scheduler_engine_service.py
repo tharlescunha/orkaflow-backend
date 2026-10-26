@@ -184,6 +184,9 @@ class SchedulerEngineService:
 
         if created_tasks:
             schedule.last_run_at = last_created_time
+            # Voltou a criar task: o "ignorado" anterior já não vale (senão o aviso ficava para sempre).
+            schedule.last_skipped_reason = None
+            schedule.last_skipped_at = None
 
         if schedule.calendar_type == CalendarType.ONCE:
             if created_tasks or duplicate_tasks:
