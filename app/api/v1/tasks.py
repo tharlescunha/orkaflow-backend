@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db
+from app.api.deps import get_current_user, get_db
 from app.domain.enums import TaskStatus
+from app.models.user import User
 from app.schemas.task import (
     TaskActionResponse,
     TaskCreate,
@@ -80,8 +81,10 @@ def get_task(
 def create_task(
     payload: TaskCreate,
     service: TaskService = Depends(get_task_service),
+    current_user: User = Depends(get_current_user),
 ):
-    task = service.create_manual_task(payload=payload, created_by=None)
+    # "Criado por" na tela da task: quem disparou pelo painel ou pela API.
+    task = service.create_manual_task(payload=payload, created_by=current_user.id)
     return TaskManualCreateResponse(
         message="Task criada com sucesso.",
         task=task,

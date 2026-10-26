@@ -168,6 +168,23 @@ class McpHandlerTests(unittest.TestCase):
         self.assertEqual((schedule.status, schedule.active), (ScheduleStatus.ACTIVE, True))
 
 
+class TaskCreatedByTests(unittest.TestCase):
+    def test_panel_route_records_who_created_the_task(self):
+        from app.api.v1 import tasks as tasks_route
+        from app.schemas.task import TaskCreate
+        from app.services.task_service import TaskService
+
+        f = Fixture()
+        auto, _ = f.automation(runners=[f.runner()])
+        f.db.commit()
+        response = tasks_route.create_task(
+            TaskCreate(automation_id=auto.id, priority=5, parameters=[]),
+            service=TaskService(f.db),
+            current_user=f.user,
+        )
+        self.assertEqual(f.db.get(Task, response.task.id).created_by, f.user.id)
+
+
 async def _inline(func, *args):
     # sqlite em memória é uma conexão por thread: roda na mesma thread do teste.
     return func(*args)

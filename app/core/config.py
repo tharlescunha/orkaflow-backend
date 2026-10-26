@@ -65,6 +65,8 @@ class Settings(BaseSettings):
 
     # Servidor MCP (POST /mcp) para IAs, autenticado com token de integração.
     enable_mcp: bool = Field(True, alias="ENABLE_MCP")
+    # Endereço público do backend mostrado na tela do MCP (ex.: https://orkaflow.empresa.com.br). Vazio = automático.
+    public_api_url: str | None = Field(None, alias="PUBLIC_API_URL")
     health_check_background_workers: bool = Field(True, alias="HEALTH_CHECK_BACKGROUND_WORKERS")
 
     @property

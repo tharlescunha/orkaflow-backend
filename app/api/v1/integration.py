@@ -41,13 +41,16 @@ def mcp_info(request: Request):
     """Endereço do servidor MCP deste backend e as ferramentas disponíveis para a IA."""
     from app.mcp.tools import tool_catalog
 
-    base = str(request.base_url).rstrip("/")
+    # PUBLIC_API_URL fixa o endereço mostrado; sem ela o painel usa o endereço do backend que o navegador acessa.
+    public = (settings.public_api_url or "").strip().rstrip("/")
+    base = public or str(request.base_url).rstrip("/")
     # Atrás do proxy do Azure o esquema chega como http; o endereço público é https.
     forwarded_proto = request.headers.get("x-forwarded-proto")
-    if forwarded_proto and base.startswith("http://"):
+    if not public and forwarded_proto and base.startswith("http://"):
         base = f"{forwarded_proto}://" + base[len("http://"):]
     return {
         "enabled": settings.enable_mcp,
+        "public_url_configured": bool(public),
         "url": f"{base}/mcp",
         "api_base_url": f"{base}{settings.api_prefix}",
         "tools": tool_catalog(),

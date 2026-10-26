@@ -1461,7 +1461,8 @@ GUIDE.update({
     "POST /api/v1/tasks/": {
         "summary": "Cria uma task (executa uma automação)",
         "description": (
-            "Coloca uma execução da automação na fila; a próxima máquina vinculada e livre a assume.\n\n"
+            "Coloca uma execução da automação na fila; a próxima máquina vinculada e livre a assume. "
+            "O dono do token fica registrado como \"Criado por\".\n\n"
             "Campos principais:\n"
             "- `automation_id` (obrigatório).\n"
             "- `runner_id`: força uma máquina (precisa estar vinculada à automação, senão 400).\n"
@@ -2140,6 +2141,7 @@ GUIDE.update({
         ),
         "example_response": {
             "enabled": True,
+            "public_url_configured": False,
             "url": "https://orkaflow.exemplo.com/mcp",
             "api_base_url": "https://orkaflow.exemplo.com/api/v1",
             "tools": [
