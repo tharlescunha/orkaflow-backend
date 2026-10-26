@@ -11,6 +11,7 @@ from app.services.capacity_service import CapacityService
 from app.services.lock_service import LockService
 from app.services.task_events import add_task_log
 from app.services.task_rules import FINAL_STATUSES as _FINAL_STATUSES
+from app.services.task_rules import as_aware
 
 # Inclui FORCED_STOP (junho/2026).
 FINAL_STATUSES = set(_FINAL_STATUSES)
@@ -36,12 +37,15 @@ CANCEL_ALLOWED_STATUSES = {
 
 
 def _calculate_execution_duration_seconds(task) -> int | None:
-    if task.started_at and task.finished_at:
-        return int((task.finished_at - task.started_at).total_seconds())
+    # as_aware: datas sem fuso (bancos/drivers que devolvem naive) não podem derrubar a listagem.
+    started_at = as_aware(task.started_at)
+    finished_at = as_aware(task.finished_at)
+    if started_at and finished_at:
+        return int((finished_at - started_at).total_seconds())
 
-    if task.started_at and task.status == TaskStatus.RUNNING:
+    if started_at and task.status == TaskStatus.RUNNING:
         now = datetime.now(UTC)
-        return int((now - task.started_at).total_seconds())
+        return int((now - started_at).total_seconds())
 
     return None
 
