@@ -141,8 +141,8 @@ imprime. Nenhum acesso à rede.
 
 - Fonte da verdade: `orkaflow-worker/maestro/`. Versão semântica em `maestro/__init__.py`.
 - Máquinas: o worker instala/atualiza no venv de cada bot a partir da pasta local.
-- Desenvolvedor: `pip install "git+https://<git do worker>#subdirectory=maestro"` ou o `.whl`
-  publicado no feed do DevOps. Como o pacote não tem dependências, qualquer Python 3.10+ serve.
+- Desenvolvedor: `pip install git+https://github.com/tharlescunha/maestro.git` (repositório publicado a partir da
+  pasta `maestro/` do worker com `git subtree push --prefix=maestro <url> main`). Sem dependências: qualquer Python 3.10+.
 
 ## Ctrl+Espaço e guia
 
