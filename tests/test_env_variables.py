@@ -198,3 +198,20 @@ class SqlServerCompatibilityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
+class ToReadManyTests(EnvBase):
+    """to_read_many devolve os mesmos rótulos que to_read (global, automação, máquina, alvo removido)."""
+
+    def test_labels_batch_match_single(self):
+        self.add("A", "1")
+        self.add("B", "2", scope="automation", scope_id=self.auto.id)
+        self.add("C", "3", scope="runner", scope_id=self.r1.id)
+        self.db.add(EnvVariable(name="D", value="4", scope_type="bot", scope_id=999))
+        self.db.commit()
+        variables = svc.list_variables(self.db)
+        many = svc.to_read_many(self.db, variables)
+        single = [svc.to_read(self.db, v) for v in variables]
+        self.assertEqual(many, single)
+        self.assertIn("bot #999 (removido)", {m["scope_label"] for m in many})

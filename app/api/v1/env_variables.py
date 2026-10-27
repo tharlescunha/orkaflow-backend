@@ -28,7 +28,7 @@ def list_variables(
     search: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ):
-    return [service.to_read(db, var) for var in service.list_variables(db, scope_type, scope_id, search)]
+    return service.to_read_many(db, service.list_variables(db, scope_type, scope_id, search))
 
 
 # rota estática antes da parametrizada

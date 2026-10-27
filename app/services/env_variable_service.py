@@ -77,6 +77,52 @@ def _label(db: Session, scope_type: str, scope_id: int) -> str:
 
 
 # --------------------------------------------------------------------- leitura
+def _to_read_with_label(var: EnvVariable, scope_label: str) -> dict:
+    return {
+        "id": var.id,
+        "name": var.name,
+        "scope_type": var.scope_type,
+        "scope_id": var.scope_id,
+        "scope_label": scope_label,
+        "is_secret": var.is_secret,
+        "value": None if var.is_secret else var.value,
+        "description": var.description,
+        "active": var.active,
+        "updated_at": var.updated_at,
+    }
+
+
+def to_read_many(db: Session, variables: list[EnvVariable]) -> list[dict]:
+    """Lista inteira com uma consulta por tipo de alvo (bot, automação, máquina), em vez de uma por variável.
+
+    A tela de Variáveis demorava porque cada linha buscava o nome do seu alvo separadamente.
+    """
+    ids: dict[str, set[int]] = {"bot": set(), "automation": set(), "runner": set()}
+    for var in variables:
+        if var.scope_type in ids:
+            ids[var.scope_type].add(var.scope_id)
+
+    labels: dict[tuple[str, int], str] = {}
+    if ids["bot"]:
+        for bot in db.scalars(select(Bot).where(Bot.id.in_(ids["bot"]))):
+            labels[("bot", bot.id)] = bot.name
+    if ids["automation"]:
+        for automation in db.scalars(select(Automation).where(Automation.id.in_(ids["automation"]))):
+            labels[("automation", automation.id)] = automation.label or automation.name
+    if ids["runner"]:
+        for runner in db.scalars(select(Runner).where(Runner.id.in_(ids["runner"]))):
+            labels[("runner", runner.id)] = runner.label or runner.name
+
+    result = []
+    for var in variables:
+        if var.scope_type == "global":
+            label = "Global"
+        else:
+            label = labels.get((var.scope_type, var.scope_id)) or f"{var.scope_type} #{var.scope_id} (removido)"
+        result.append(_to_read_with_label(var, label))
+    return result
+
+
 def to_read(db: Session, var: EnvVariable) -> dict:
     return {
         "id": var.id,
