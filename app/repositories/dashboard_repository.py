@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from zoneinfo import ZoneInfo
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -8,7 +9,10 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.domain.enums import RunnerStatus, TaskStatus
+
+BRT = ZoneInfo("America/Sao_Paulo")
 from app.models.automation import Automation
+from app.services.task_rules import as_aware as _aw
 from app.models.automation_runner import AutomationRunner
 from app.models.bot import Bot
 from app.models.bot_version import BotVersion
@@ -303,7 +307,7 @@ class DashboardRepository:
 
         for task in tasks:
             if task.created_at and task.started_at:
-                value = int((task.started_at - task.created_at).total_seconds())
+                value = int((_aw(task.started_at) - _aw(task.created_at)).total_seconds())
                 if value >= 0:
                     durations.append(value)
 
@@ -319,11 +323,11 @@ class DashboardRepository:
 
         for task in tasks:
             if task.started_at and task.finished_at:
-                value = int((task.finished_at - task.started_at).total_seconds())
+                value = int((_aw(task.finished_at) - _aw(task.started_at)).total_seconds())
                 if value >= 0:
                     durations.append(value)
             elif task.started_at and task.status == TaskStatus.RUNNING:
-                value = int((now - task.started_at).total_seconds())
+                value = int((now - _aw(task.started_at)).total_seconds())
                 if value >= 0:
                     durations.append(value)
 
@@ -339,11 +343,11 @@ class DashboardRepository:
 
         for task in tasks:
             if task.started_at and task.finished_at:
-                value = int((task.finished_at - task.started_at).total_seconds())
+                value = int((_aw(task.finished_at) - _aw(task.started_at)).total_seconds())
                 if value > 0:
                     total += value
             elif task.started_at and task.status == TaskStatus.RUNNING:
-                value = int((now - task.started_at).total_seconds())
+                value = int((now - _aw(task.started_at)).total_seconds())
                 if value > 0:
                     total += value
 
@@ -351,14 +355,57 @@ class DashboardRepository:
 
     @staticmethod
     def calculate_success_rate_percent(tasks: list[Task]) -> float:
+        """Sucesso entre as tasks que terminaram (sucesso + falha). Fila, rodando e canceladas não contam:
+        antes elas entravam no denominador e a taxa caía enquanto as tasks ainda estavam em andamento."""
         counts = DashboardRepository.calculate_task_counts(tasks)
-        total = counts["total_tasks"]
-        success = counts["success_tasks"]
+        done = counts["success_tasks"] + counts["error_tasks"]
 
-        if total <= 0:
+        if done <= 0:
             return 0.0
 
-        return round((success / total) * 100, 2)
+        return round((counts["success_tasks"] / done) * 100, 2)
+
+    @staticmethod
+    def group_tasks_timeline(
+        tasks: list[Task], *, date_from: datetime, date_to: datetime, period: str
+    ) -> list[dict[str, Any]]:
+        """Série para o gráfico do dashboard, no horário de Brasília e com buckets vazios preenchidos:
+        por hora em "1d", por dia nos demais períodos."""
+        by_hour = period == "1d"
+        step = timedelta(hours=1) if by_hour else timedelta(days=1)
+
+        start_local = date_from.astimezone(BRT)
+        start_local = start_local.replace(minute=0, second=0, microsecond=0)
+        if not by_hour:
+            start_local = start_local.replace(hour=0)
+        end_local = date_to.astimezone(BRT)
+
+        buckets: list[dict[str, Any]] = []
+        index: dict[str, dict[str, Any]] = {}
+        cursor = start_local
+        while cursor <= end_local:
+            key = cursor.strftime("%Y-%m-%dT%H") if by_hour else cursor.strftime("%Y-%m-%d")
+            label = cursor.strftime("%H:00") if by_hour else cursor.strftime("%d/%m")
+            item = {"key": key, "label": label, "success_tasks": 0, "error_tasks": 0, "other_tasks": 0, "total_tasks": 0}
+            buckets.append(item)
+            index[key] = item
+            cursor += step
+
+        for task in tasks:
+            local = _aw(task.created_at).astimezone(BRT)
+            key = local.strftime("%Y-%m-%dT%H") if by_hour else local.strftime("%Y-%m-%d")
+            item = index.get(key)
+            if item is None:
+                continue
+            item["total_tasks"] += 1
+            if task.status == TaskStatus.FINISHED:
+                item["success_tasks"] += 1
+            elif task.status in ERROR_STATUSES:
+                item["error_tasks"] += 1
+            else:
+                item["other_tasks"] += 1
+
+        return buckets
 
     @staticmethod
     def group_tasks_per_hour(tasks: list[Task]) -> list[dict[str, Any]]:
@@ -372,15 +419,15 @@ class DashboardRepository:
         now = datetime.now(UTC)
 
         for task in tasks:
-            hour_key = task.created_at.astimezone(UTC).strftime("%H:00")
+            hour_key = _aw(task.created_at).astimezone(UTC).strftime("%H:00")
             grouped[hour_key]["total_tasks"] += 1
 
             if task.started_at and task.finished_at:
-                execution_seconds = int((task.finished_at - task.started_at).total_seconds())
+                execution_seconds = int((_aw(task.finished_at) - _aw(task.started_at)).total_seconds())
                 if execution_seconds > 0:
                     grouped[hour_key]["execution_seconds"] += execution_seconds
             elif task.started_at and task.status == TaskStatus.RUNNING:
-                execution_seconds = int((now - task.started_at).total_seconds())
+                execution_seconds = int((now - _aw(task.started_at)).total_seconds())
                 if execution_seconds > 0:
                     grouped[hour_key]["execution_seconds"] += execution_seconds
 
@@ -412,7 +459,7 @@ class DashboardRepository:
 
         execution_tasks.sort(
             key=lambda t: (
-                t.started_at or datetime.min.replace(tzinfo=UTC),
+                _aw(t.started_at) or datetime.min.replace(tzinfo=UTC),
                 t.id,
             ),
             reverse=True,
@@ -444,7 +491,8 @@ class DashboardRepository:
         date_from: datetime,
         date_to: datetime,
     ) -> float:
-        base_start = runner.created_at if runner.created_at > date_from else date_from
+        runner_created = _aw(runner.created_at)
+        base_start = runner_created if runner_created and runner_created > date_from else date_from
         base_end = date_to
 
         if base_end <= base_start:
@@ -463,17 +511,17 @@ class DashboardRepository:
         execution_duration_seconds = None
 
         if task.created_at and task.started_at:
-            value = int((task.started_at - task.created_at).total_seconds())
+            value = int((_aw(task.started_at) - _aw(task.created_at)).total_seconds())
             if value >= 0:
                 queue_seconds = value
 
         now = datetime.now(UTC)
         if task.started_at and task.finished_at:
-            value = int((task.finished_at - task.started_at).total_seconds())
+            value = int((_aw(task.finished_at) - _aw(task.started_at)).total_seconds())
             if value >= 0:
                 execution_duration_seconds = value
         elif task.started_at and task.status == TaskStatus.RUNNING:
-            value = int((now - task.started_at).total_seconds())
+            value = int((now - _aw(task.started_at)).total_seconds())
             if value >= 0:
                 execution_duration_seconds = value
 

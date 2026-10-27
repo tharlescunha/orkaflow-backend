@@ -50,6 +50,17 @@ class DashboardTasksPerHourItem(OrkaBaseSchema):
     execution_seconds: int
 
 
+class DashboardTimelineItem(OrkaBaseSchema):
+    """Um ponto do gráfico: hora (período 1d) ou dia (demais), no horário de Brasília."""
+
+    key: str
+    label: str
+    success_tasks: int
+    error_tasks: int
+    other_tasks: int
+    total_tasks: int
+
+
 class DashboardRunnerBotRef(OrkaBaseSchema):
     bot_id: int
     bot_name: str
@@ -144,6 +155,7 @@ class DashboardOverviewResponse(OrkaBaseSchema):
     date_to: datetime
     summary: DashboardOverviewSummary
     tasks_per_hour: list[DashboardTasksPerHourItem]
+    timeline: list[DashboardTimelineItem] = []
     recent_tasks: list[DashboardRecentTaskItem]
 
 

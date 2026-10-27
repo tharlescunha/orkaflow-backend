@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.domain.enums import ErrorCategory, RunnerStatus, TaskLogLevel, TaskLogSource, TaskStatus
 from app.models.runner import Runner
+from app.models.runner_config import RunnerConfig
 from app.models.task import Task
 from app.repositories.lock_repository import LockRepository
 from app.services.capacity_service import CapacityService
@@ -344,11 +345,13 @@ class WatchdogService:
         stmt = (
             select(Task, Runner)
             .join(Runner, Runner.id == Task.runner_id)
+            .outerjoin(RunnerConfig, RunnerConfig.runner_id == Runner.id)
             .where(Task.status == TaskStatus.WAITING)
             .where(Task.runner_id.is_not(None))
             .where(
                 (Runner.enabled == False)
                 | (Runner.status.in_([RunnerStatus.OFFLINE, RunnerStatus.MAINTENANCE]))
+                | (RunnerConfig.maintenance_mode == True)  # noqa: E712
             )
         )
 

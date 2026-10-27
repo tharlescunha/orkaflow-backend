@@ -7,6 +7,7 @@ from app.repositories.runner_repository import RunnerRepository
 from app.services.task_rules import MAX_CONCURRENCY_CAP, MIN_CONCURRENCY
 from app.schemas.runner import RunnerConfigUpdate, RunnerCreate, RunnerRead, RunnerUpdate
 from datetime import UTC, datetime
+from app.services.task_rules import runner_in_maintenance
 from app.schemas.runner_overview import (
     RunnerOverviewLinkedBot,
     RunnerOverviewLastExecution,
@@ -29,7 +30,9 @@ class RunnerService:
         linked_bots_count = self.repo.count_linked_bots(runner.id)
 
         display_status = runner.status
-        if running_tasks_count > 0:
+        if runner_in_maintenance(runner):
+            display_status = "maintenance"
+        elif running_tasks_count > 0:
             display_status = "busy"
         elif runner.status == "busy":
             display_status = "online"
@@ -411,7 +414,9 @@ class RunnerService:
             )
 
             display_status = runner.status
-            if counts["running_tasks_count"] > 0:
+            if runner_in_maintenance(runner):
+                display_status = "maintenance"
+            elif counts["running_tasks_count"] > 0:
                 display_status = "busy"
             elif runner.status == "busy":
                 display_status = "online"

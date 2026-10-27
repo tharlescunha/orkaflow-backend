@@ -54,6 +54,7 @@ from app.services.capacity_service import (
 from app.services.lock_service import LockService
 from app.services.task_events import add_task_error, add_task_log
 from app.services.task_rules import (
+    runner_in_maintenance,
     EXECUTING_STATUSES,
     FINAL_STATUSES,
     MODE_BACKGROUND,
@@ -668,7 +669,7 @@ class WorkerService:
         self._refresh_runner_status(runner, reason="next_task")
         self.db.commit()
 
-        if runner.status in (RunnerStatus.MAINTENANCE, RunnerStatus.OFFLINE):
+        if runner.status in (RunnerStatus.MAINTENANCE, RunnerStatus.OFFLINE) or runner_in_maintenance(runner):
             return self._empty_next_task_response()
 
         requested = self._resolve_requested_execution_mode(payload)
@@ -716,7 +717,7 @@ class WorkerService:
         self._mark_alive(runner, reason="claim_task")
         self.db.commit()
 
-        if runner.status == RunnerStatus.MAINTENANCE:
+        if runner.status == RunnerStatus.MAINTENANCE or runner_in_maintenance(runner):
             raise ValidationException(
                 "Runner em manutenção (definido pelo administrador): não pode assumir novas tasks."
             )

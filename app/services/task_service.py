@@ -2,6 +2,8 @@ import json
 from datetime import UTC, datetime
 
 from app.core.exceptions import NotFoundException, ValidationException
+from app.models.runner import Runner
+from app.services.task_rules import runner_in_maintenance
 from app.domain.enums import ExecutionMode, RunnerStatus, TaskLogLevel, TaskLogSource, TaskStatus
 from app.repositories.runner_repository import RunnerRepository
 from app.repositories.task_repository import TaskRepository
@@ -385,6 +387,11 @@ class TaskService:
             if not has_link:
                 raise ValidationException(
                     "O runner informado não está vinculado à automação."
+                )
+            pinned_runner = self.db.get(Runner, payload.runner_id)
+            if runner_in_maintenance(pinned_runner):
+                raise ValidationException(
+                    "Essa máquina está em modo manutenção e não recebe tasks novas. Escolha outra ou deixe sem máquina."
                 )
 
         automation_parameters = self.repository.get_automation_parameters(payload.automation_id)

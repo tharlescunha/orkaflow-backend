@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
@@ -12,6 +13,11 @@ from app.repositories.automation_success_trigger_repository import (
 from app.repositories.task_log_repository import TaskLogRepository
 from app.repositories.task_repository import TaskRepository
 
+logger = logging.getLogger(__name__)
+
+# Profundidade máxima de uma cadeia de gatilhos (pai -> filho -> neto ...).
+MAX_CHAIN_DEPTH = 25
+
 
 class AutomationTriggerService:
     def __init__(self, db: Session):
@@ -20,8 +26,22 @@ class AutomationTriggerService:
         self.task_log_repository = TaskLogRepository(db)
 
     def create_success_followups(self, parent_task: Task) -> list[Task]:
+        """Cria as tasks encadeadas. Qualquer erro aqui fica no log da task pai e não derruba
+        o fechamento da task (antes um erro no gatilho desfazia o próprio FINISHED do robô)."""
         if parent_task.status != TaskStatus.FINISHED:
             return []
+        try:
+            with self.db.begin_nested():
+                return self._create_success_followups(parent_task)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Gatilho de sucesso falhou para task #%s", parent_task.id)
+            try:
+                self._log_parent_warning(parent_task, f"Gatilho de sucesso falhou e foi ignorado: {exc}")
+            except Exception:  # noqa: BLE001
+                logger.warning("Nao foi possivel registrar o aviso do gatilho na task #%s", parent_task.id)
+            return []
+
+    def _create_success_followups(self, parent_task: Task) -> list[Task]:
 
         triggers = list(
             AutomationSuccessTriggerRepository.list_for_source(
@@ -99,6 +119,14 @@ class AutomationTriggerService:
             )
             return None
 
+        if self._target_in_ancestry(parent_task, target_automation.id):
+            self._log_parent_warning(
+                parent_task,
+                f"Gatilho de sucesso ignorado: automacao #{target_automation.id} ja esta na cadeia desta execucao "
+                "(ciclo A -> B -> A). Revise os gatilhos.",
+            )
+            return None
+
         existing_child = self.task_repository.get_child_task_for_parent_and_automation(
             parent_task.id,
             target_automation.id,
@@ -167,6 +195,20 @@ class AutomationTriggerService:
         )
         return child_task
 
+    def _target_in_ancestry(self, parent_task: Task, target_automation_id: int) -> bool:
+        """Sobe a cadeia pai -> avô -> ... (até MAX_CHAIN_DEPTH) e diz se o destino já rodou nela."""
+        current: Task | None = parent_task
+        depth = 0
+        while current is not None and depth < MAX_CHAIN_DEPTH:
+            if current.automation_id == target_automation_id:
+                return True
+            if not current.parent_task_id:
+                return False
+            current = self.db.get(Task, current.parent_task_id)
+            depth += 1
+        # Cadeia longa demais também é tratada como ciclo: ninguém encadeia 25 automações de propósito.
+        return current is not None
+
     def _parse_result_workflow(self, parent_task: Task) -> list[dict[str, Any]] | None:
         raw_result = (parent_task.result_json or "").strip()
         if not raw_result:
@@ -175,12 +217,12 @@ class AutomationTriggerService:
         try:
             result = json.loads(raw_result)
         except Exception:
-            self._log_parent_warning(parent_task, "result_json invalido; workflow dinamico ignorado.")
-            return []
+            self._log_parent_warning(parent_task, "result_json invalido; workflow dinamico ignorado (gatilhos fixos mantidos).")
+            return None
 
         if not isinstance(result, dict):
-            self._log_parent_warning(parent_task, "result_json precisa ser objeto JSON; workflow dinamico ignorado.")
-            return []
+            self._log_parent_warning(parent_task, "result_json precisa ser objeto JSON; workflow dinamico ignorado (gatilhos fixos mantidos).")
+            return None
 
         workflow = result.get("orkaflow")
         if workflow is None:

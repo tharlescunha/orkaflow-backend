@@ -11,6 +11,7 @@ from app.models.automation_runner import AutomationRunner
 from app.models.bot import Bot
 from app.models.bot_version import BotVersion
 from app.models.runner import Runner
+from app.services.task_rules import runner_in_maintenance
 from app.models.task import Task
 from app.repositories.task_repository import TaskRepository
 from app.services.capacity_service import (
@@ -187,6 +188,8 @@ class DispatchService:
     @staticmethod
     def _runner_is_eligible(runner) -> bool:
         if not (bool(runner.enabled) and runner.status in (RunnerStatus.ONLINE, RunnerStatus.BUSY)):
+            return False
+        if runner_in_maintenance(runner):
             return False
         heartbeat = runner.last_heartbeat
         if heartbeat is None:

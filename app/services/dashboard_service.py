@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import UTC, datetime
 
+from app.services.task_rules import as_aware as _aw
 from app.repositories.dashboard_repository import DashboardRepository
 from app.schemas.dashboard import (
     DashboardBotMachineRef,
@@ -16,6 +17,7 @@ from app.schemas.dashboard import (
     DashboardRunnerMetrics,
     DashboardRunnersResponse,
     DashboardTasksPerHourItem,
+    DashboardTimelineItem,
 )
 
 
@@ -95,6 +97,11 @@ class DashboardService:
             for item in self.repo.group_tasks_per_hour(tasks)
         ]
 
+        timeline = [
+            DashboardTimelineItem.model_validate(item)
+            for item in self.repo.group_tasks_timeline(tasks, date_from=date_from, date_to=date_to, period=period)
+        ]
+
         recent_task_items = [
             DashboardRecentTaskItem.model_validate(self.repo.serialize_recent_task(task))
             for task in recent_tasks
@@ -122,6 +129,7 @@ class DashboardService:
             date_to=date_to,
             summary=summary,
             tasks_per_hour=tasks_per_hour,
+            timeline=timeline,
             recent_tasks=recent_task_items,
         )
 
@@ -181,7 +189,7 @@ class DashboardService:
 
                 if last_execution_task.started_at and last_execution_task.finished_at:
                     execution_duration_seconds = int(
-                        (last_execution_task.finished_at - last_execution_task.started_at).total_seconds()
+                        (_aw(last_execution_task.finished_at) - _aw(last_execution_task.started_at)).total_seconds()
                     )
                 elif (
                     last_execution_task.started_at
@@ -189,7 +197,7 @@ class DashboardService:
                     and last_execution_task.status.value == "running"
                 ):
                     execution_duration_seconds = int(
-                        (now - last_execution_task.started_at).total_seconds()
+                        (now - _aw(last_execution_task.started_at)).total_seconds()
                     )
 
                 last_execution = DashboardRunnerLastExecution(

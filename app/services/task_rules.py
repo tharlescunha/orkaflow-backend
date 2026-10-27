@@ -57,3 +57,16 @@ def as_aware(dt: datetime | None) -> datetime | None:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=UTC)
     return dt
+
+
+def runner_in_maintenance(runner) -> bool:
+    """Máquina em manutenção: pelo status (API) ou pela caixa "Modo manutenção" do Runner Config.
+
+    Antes só o status contava e a caixa do painel não fazia nada: a máquina seguia pegando task.
+    """
+    if runner is None:
+        return False
+    if str(getattr(runner, "status", "") or "") == "maintenance":
+        return True
+    config = getattr(runner, "config", None)
+    return bool(config is not None and getattr(config, "maintenance_mode", False))
