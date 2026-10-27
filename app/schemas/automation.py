@@ -6,6 +6,24 @@ from pydantic import BaseModel, Field
 from app.domain.enums import NotificationType, ParameterType
 
 
+class AutomationExclusiveGroupMemberResponse(BaseModel):
+    id: int
+    name: str
+    label: str | None = None
+    active: bool = True
+
+
+class AutomationExclusiveGroupLockResponse(BaseModel):
+    """Quem está segurando o grupo agora (task em execução de uma automação do grupo)."""
+
+    task_id: int
+    automation_id: int | None = None
+    automation_name: str | None = None
+    runner_id: int | None = None
+    runner_name: str | None = None
+    acquired_at: datetime | None = None
+
+
 class AutomationExclusiveGroupResponse(BaseModel):
     id: int
     name: str
@@ -14,6 +32,9 @@ class AutomationExclusiveGroupResponse(BaseModel):
     capacity: int = 1
     active: bool = True
     automation_ids: list[int] = Field(default_factory=list)
+    # Preenchidos só nas rotas de grupo (lista/detalhe): membros com nome e lock atual.
+    automations: list[AutomationExclusiveGroupMemberResponse] = Field(default_factory=list)
+    current_lock: AutomationExclusiveGroupLockResponse | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -26,6 +47,17 @@ class AutomationExclusiveGroupCreate(BaseModel):
     description: Optional[str] = None
     capacity: int = Field(default=1, ge=1, le=20)
     active: bool = True
+    # Opcional: já vincula automações ao criar pela tela de grupos.
+    automation_ids: Optional[list[int]] = None
+
+
+class AutomationExclusiveGroupUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, max_length=120)
+    label: Optional[str] = Field(default=None, max_length=150)
+    description: Optional[str] = None
+    active: Optional[bool] = None
+    # Quando enviado, substitui a lista de automações do grupo.
+    automation_ids: Optional[list[int]] = None
 
 
 class AutomationSuccessTriggerResponse(BaseModel):

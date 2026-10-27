@@ -70,7 +70,10 @@ Automações (menu Automação):
 4. Parâmetros declarados (aparecem na Nova Task): GET/POST /api/v1/automations/{id}/parameters
    (type string/integer/float/boolean/datetime/json/select/secret_ref; select exige allowed_values).
 5. Alterar: PUT /api/v1/automations/{id}. Ativar/desativar: POST /api/v1/automations/{id}/activate ou /deactivate.
-6. Grupos exclusivos: GET/POST /api/v1/automations/exclusive-groups/ (capacity sempre 1).
+6. Grupos exclusivos (automações que não rodam juntas, mesmo em máquinas diferentes): GET/POST
+   /api/v1/automations/exclusive-groups/ e GET/PUT/DELETE /exclusive-groups/{id}. A lista traz automations
+   (membros) e current_lock (task que está segurando o grupo agora). PUT com automation_ids substitui os membros;
+   active=false desativa sem derrubar nada. DELETE só sem membros. capacity sempre 1.
 7. Agendar: assunto agendamentos. Variáveis: assunto variaveis.
 """,
     "maquinas": """\

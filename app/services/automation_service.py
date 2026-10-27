@@ -150,10 +150,90 @@ class AutomationService:
             "updated_at": automation.updated_at,
         }
 
+    # ------------------------------------------------------------ grupos exclusivos
+    @staticmethod
+    def _enrich_exclusive_groups(db: Session, serialized: list[dict]) -> list[dict]:
+        """Completa cada grupo com as automações (nome/ativa) e quem segura o lock agora.
+
+        Duas consultas no total, independentemente de quantos grupos existam."""
+        if not serialized:
+            return serialized
+
+        automation_ids = sorted({aid for item in serialized for aid in item["automation_ids"]})
+        automations_by_id: dict[int, Automation] = {}
+        if automation_ids:
+            rows = db.execute(select(Automation).where(Automation.id.in_(automation_ids))).scalars().all()
+            automations_by_id = {a.id: a for a in rows}
+
+        from app.models.lock import Lock
+        from app.models.runner import Runner
+        from app.models.task import Task
+
+        lock_keys = [f"exclusive_group:{item['id']}" for item in serialized]
+        lock_rows = db.execute(
+            select(Lock, Task, Automation, Runner)
+            .join(Task, Task.id == Lock.owner_task_id)
+            .outerjoin(Automation, Automation.id == Task.automation_id)
+            .outerjoin(Runner, Runner.id == Lock.runner_id)
+            .where(Lock.lock_key.in_(lock_keys))
+            .where(Lock.active == True)  # noqa: E712
+            .where(Lock.released_at.is_(None))
+            .order_by(Lock.id.desc())
+        ).all()
+        locks_by_key: dict[str, dict] = {}
+        for lock, task, automation, runner in lock_rows:
+            locks_by_key.setdefault(
+                lock.lock_key,
+                {
+                    "task_id": task.id,
+                    "automation_id": task.automation_id,
+                    "automation_name": (automation.label or automation.name) if automation else None,
+                    "runner_id": lock.runner_id,
+                    "runner_name": (runner.label or runner.name) if runner else None,
+                    "acquired_at": lock.acquired_at,
+                },
+            )
+
+        for item in serialized:
+            item["automations"] = [
+                {
+                    "id": a.id,
+                    "name": a.name,
+                    "label": a.label,
+                    "active": a.active,
+                }
+                for aid in item["automation_ids"]
+                if (a := automations_by_id.get(aid)) is not None
+            ]
+            item["current_lock"] = locks_by_key.get(f"exclusive_group:{item['id']}")
+        return serialized
+
     @staticmethod
     def list_exclusive_groups(db: Session, active: bool | None = None):
         groups = AutomationExclusiveGroupRepository.list(db, active=active)
-        return [AutomationService._serialize_exclusive_group(group) for group in groups]
+        serialized = [AutomationService._serialize_exclusive_group(group) for group in groups]
+        return AutomationService._enrich_exclusive_groups(db, serialized)
+
+    @staticmethod
+    def get_exclusive_group(db: Session, group_id: int):
+        group = AutomationExclusiveGroupRepository.get_by_id(db, group_id)
+        if not group:
+            raise NotFoundException("Grupo exclusivo não encontrado")
+        serialized = [AutomationService._serialize_exclusive_group(group)]
+        return AutomationService._enrich_exclusive_groups(db, serialized)[0]
+
+    @staticmethod
+    def _validate_member_automation_ids(db: Session, automation_ids: list[int]) -> list[int]:
+        normalized = sorted({int(a) for a in automation_ids})
+        if not normalized:
+            return []
+        found = set(
+            db.execute(select(Automation.id).where(Automation.id.in_(normalized))).scalars().all()
+        )
+        missing = [a for a in normalized if a not in found]
+        if missing:
+            raise NotFoundException(f"Automação não encontrada: {', '.join(str(m) for m in missing)}")
+        return normalized
 
     @staticmethod
     def create_exclusive_group(db: Session, data: dict):
@@ -168,6 +248,9 @@ class AutomationService:
         if (data.get("capacity") or 1) != 1:
             raise ValidationException("Grupo exclusivo suporta apenas capacidade 1 nesta versão")
 
+        automation_ids = data.pop("automation_ids", None)
+        member_ids = AutomationService._validate_member_automation_ids(db, automation_ids or [])
+
         data = {
             **data,
             "name": normalized_name,
@@ -175,7 +258,54 @@ class AutomationService:
             "capacity": data.get("capacity") or 1,
         }
         group = AutomationExclusiveGroupRepository.create(db, data)
-        return AutomationService._serialize_exclusive_group(group)
+        if member_ids:
+            AutomationExclusiveGroupRepository.replace_members_for_group(db, group.id, member_ids)
+            db.commit()
+        return AutomationService.get_exclusive_group(db, group.id)
+
+    @staticmethod
+    def update_exclusive_group(db: Session, group_id: int, data: dict):
+        group = AutomationExclusiveGroupRepository.get_by_id(db, group_id)
+        if not group:
+            raise NotFoundException("Grupo exclusivo não encontrado")
+
+        if "name" in data and data["name"] is not None:
+            normalized_name = data["name"].strip()
+            if not normalized_name:
+                raise ValidationException("Nome do grupo exclusivo é obrigatório")
+            existing = AutomationExclusiveGroupRepository.get_by_name(db, normalized_name)
+            if existing and existing.id != group.id:
+                raise ConflictException("Já existe um grupo exclusivo com esse nome")
+            group.name = normalized_name
+        if "label" in data:
+            group.label = data["label"] or None
+        if "description" in data:
+            group.description = data["description"] or None
+        if "active" in data and data["active"] is not None:
+            # Desativar não derruba nada em execução: o lock atual é liberado quando a task termina
+            # e, a partir daí, o grupo deixa de ser considerado.
+            group.active = bool(data["active"])
+
+        automation_ids = data.get("automation_ids")
+        if automation_ids is not None:
+            member_ids = AutomationService._validate_member_automation_ids(db, automation_ids)
+            AutomationExclusiveGroupRepository.replace_members_for_group(db, group.id, member_ids)
+
+        db.commit()
+        return AutomationService.get_exclusive_group(db, group.id)
+
+    @staticmethod
+    def delete_exclusive_group(db: Session, group_id: int) -> None:
+        group = AutomationExclusiveGroupRepository.get_by_id(db, group_id)
+        if not group:
+            raise NotFoundException("Grupo exclusivo não encontrado")
+        members = list(getattr(group, "automation_links", []) or [])
+        if members:
+            raise ConflictException(
+                f"O grupo ainda tem {len(members)} automação(ões) vinculada(s). "
+                "Tire as automações do grupo (ou desative o grupo) antes de excluir."
+            )
+        AutomationExclusiveGroupRepository.delete(db, group)
 
     @staticmethod
     def _validate_exclusive_group_ids(db: Session, group_ids: list[int]) -> list[int]:

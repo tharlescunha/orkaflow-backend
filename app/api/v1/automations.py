@@ -6,6 +6,7 @@ from app.schemas.automation import (
     AutomationCreate,
     AutomationExclusiveGroupCreate,
     AutomationExclusiveGroupResponse,
+    AutomationExclusiveGroupUpdate,
     AutomationParameterCreate,
     AutomationParameterResponse,
     AutomationParameterUpdate,
@@ -57,6 +58,26 @@ def create_exclusive_group(
     db: Session = Depends(get_db),
 ):
     return AutomationService.create_exclusive_group(db, payload.model_dump())
+
+
+@router.get("/exclusive-groups/{group_id}", response_model=AutomationExclusiveGroupResponse)
+def get_exclusive_group(group_id: int, db: Session = Depends(get_db)):
+    return AutomationService.get_exclusive_group(db, group_id)
+
+
+@router.put("/exclusive-groups/{group_id}", response_model=AutomationExclusiveGroupResponse)
+def update_exclusive_group(
+    group_id: int,
+    payload: AutomationExclusiveGroupUpdate,
+    db: Session = Depends(get_db),
+):
+    return AutomationService.update_exclusive_group(db, group_id, payload.model_dump(exclude_unset=True))
+
+
+@router.delete("/exclusive-groups/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_exclusive_group(group_id: int, db: Session = Depends(get_db)):
+    AutomationService.delete_exclusive_group(db, group_id)
+    return None
 
 
 @router.get("/{automation_id}", response_model=AutomationResponse)

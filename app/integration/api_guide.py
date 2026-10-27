@@ -207,6 +207,30 @@ _BOT_VERSION_EXAMPLE = {
     "pinned": False,
 }
 
+_EXCLUSIVE_GROUP_EXAMPLE = {
+    "id": 2,
+    "name": "sap-suprimentos",
+    "label": "SAP Suprimentos",
+    "description": "Só um robô por vez no SAP de suprimentos",
+    "capacity": 1,
+    "active": True,
+    "automation_ids": [12, 15],
+    "automations": [
+        {"id": 12, "name": "Estoque PO", "label": None, "active": True},
+        {"id": 15, "name": "Conferência PO", "label": None, "active": True},
+    ],
+    "current_lock": {
+        "task_id": 42723,
+        "automation_id": 12,
+        "automation_name": "Estoque PO",
+        "runner_id": 5,
+        "runner_name": "RPA 14",
+        "acquired_at": "2026-10-21T13:40:00Z",
+    },
+    "created_at": "2026-05-01T12:00:00Z",
+    "updated_at": None,
+}
+
 _AUTOMATION_EXAMPLE = {
     "id": 12,
     "name": "Estoque PO",
@@ -1172,18 +1196,21 @@ GUIDE.update({
     "GET /api/v1/automations/exclusive-groups/": {
         "summary": "Lista grupos exclusivos",
         "description": (
-            "Grupos exclusivos impedem que automações concorrentes rodem ao mesmo tempo (ex.: duas que usam "
-            "o mesmo login do SAP). Query: `active`. Cada grupo traz `automation_ids` vinculados.\n\n" + _BEARER
+            "Grupos exclusivos impedem que automações concorrentes rodem ao mesmo tempo, mesmo em máquinas "
+            "diferentes (ex.: duas que usam o mesmo login do SAP). Query: `active`. Cada grupo traz "
+            "`automation_ids`, `automations` (id, nome, ativa) e `current_lock` (task que está segurando o grupo "
+            "agora, com automação e máquina; `null` quando livre).\n\n" + _BEARER
         ),
-        "example_response": [_AUTOMATION_EXAMPLE["exclusive_groups"][0]],
+        "example_response": [_EXCLUSIVE_GROUP_EXAMPLE],
     },
     "POST /api/v1/automations/exclusive-groups/": {
         "summary": "Cria um grupo exclusivo",
         "description": (
-            "Cria um grupo; depois vincule automações a ele via `exclusive_group_ids` na automação.\n\n"
+            "Cria um grupo. Vincule automações por `automation_ids` aqui, no PUT do grupo, ou por "
+            "`exclusive_group_ids` na automação.\n\n"
             "- `name` único (409).\n"
-            "- `capacity` só aceita **1** nesta versão (400 para outro valor).\n\n"
-            "Não há rota para editar ou apagar grupos pela API.\n\n" + _BEARER
+            "- `capacity` só aceita **1** nesta versão (400 para outro valor).\n"
+            "- `automation_ids` (opcional): 404 se alguma não existe.\n\n" + _BEARER
         ),
         "example_request": {
             "name": "sap-suprimentos",
@@ -1191,8 +1218,36 @@ GUIDE.update({
             "description": "Só um robô por vez no SAP de suprimentos",
             "capacity": 1,
             "active": True,
+            "automation_ids": [12, 13],
         },
-        "example_response": {**_AUTOMATION_EXAMPLE["exclusive_groups"][0], "automation_ids": []},
+        "example_response": {**_EXCLUSIVE_GROUP_EXAMPLE, "current_lock": None},
+    },
+    "GET /api/v1/automations/exclusive-groups/{group_id}": {
+        "summary": "Detalhe de um grupo exclusivo",
+        "description": (
+            "Grupo com `automations` (membros) e `current_lock` (quem está rodando agora). 404 se não existe.\n\n"
+            + _BEARER
+        ),
+        "example_response": _EXCLUSIVE_GROUP_EXAMPLE,
+    },
+    "PUT /api/v1/automations/exclusive-groups/{group_id}": {
+        "summary": "Altera um grupo exclusivo (nome, descrição, ativo, automações)",
+        "description": (
+            "Envie só os campos que mudam. `automation_ids`, quando enviado, **substitui** a lista de automações "
+            "do grupo. `active=false` desativa: o lock de quem está rodando é liberado normalmente ao terminar e, "
+            "a partir daí, o grupo deixa de segurar ninguém (não derruba nada em execução).\n\n"
+            "409 se o nome já existe em outro grupo; 404 se o grupo ou alguma automação não existe.\n\n" + _BEARER
+        ),
+        "example_request": {"label": "SAP Suprimentos (novo nome)", "automation_ids": [12, 13, 14]},
+        "example_response": {**_EXCLUSIVE_GROUP_EXAMPLE, "label": "SAP Suprimentos (novo nome)", "automation_ids": [12, 13, 14]},
+    },
+    "DELETE /api/v1/automations/exclusive-groups/{group_id}": {
+        "summary": "Exclui um grupo exclusivo",
+        "description": (
+            "Só exclui grupo sem automações vinculadas (409 se ainda tiver; tire as automações antes ou "
+            "desative o grupo). 204 sem corpo; 404 se não existe.\n\n" + _BEARER
+        ),
+        "example_response": {},
     },
     "GET /api/v1/automations/{automation_id}": {
         "summary": "Detalhe de uma automação",
