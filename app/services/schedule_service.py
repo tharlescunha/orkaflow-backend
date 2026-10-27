@@ -100,7 +100,66 @@ class ScheduleService:
         ScheduleService._normalize_calendar_interval(data)
 
     @staticmethod
+    def _map_retry(data: dict) -> None:
+        """A API fala `retry_on` (lista); o modelo guarda `retry_on_json`."""
+        if "retry_on" in data:
+            value = data.pop("retry_on")
+            if value is not None:
+                data["retry_on_json"] = list(value)
+
+    @staticmethod
+    def _validate_retry_fits_interval(merged: dict, retry_max, retry_delay_seconds) -> None:
+        """Tentativas × espera precisa caber dentro do intervalo do agendamento; senão uma tentativa
+        encavala na execução seguinte (o despacho até segura, mas a fila vira bagunça)."""
+        retry_max = int(retry_max or 0)
+        delay = int(retry_delay_seconds or 0)
+        if retry_max <= 0:
+            return
+        interval = ScheduleService._interval_seconds(merged)
+        if interval is None:
+            return  # execução única ou cron irregular: não dá para garantir, não bloqueia
+        needed = retry_max * delay
+        if needed >= interval:
+            raise ValidationException(
+                f"Retentativa não cabe no agendamento: {retry_max} tentativa(s) × {delay}s = {needed}s, "
+                f"e o agendamento roda a cada {interval}s. Diminua as tentativas ou a espera."
+            )
+
+    @staticmethod
+    def _interval_seconds(merged: dict) -> int | None:
+        schedule_type = merged.get("schedule_type")
+        if schedule_type == ScheduleType.CALENDAR:
+            calendar_type = merged.get("calendar_type")
+            if calendar_type in (None, CalendarType.ONCE):
+                return None
+            multiplier = {
+                CalendarType.SECOND: 1,
+                CalendarType.MINUTE: 60,
+                CalendarType.HOUR: 3600,
+                CalendarType.DAY: 86400,
+                CalendarType.WEEK: 604800,
+                CalendarType.MONTH: 2592000,
+            }.get(calendar_type)
+            value = merged.get("interval_value")
+            return int(value) * multiplier if multiplier and value else None
+        if schedule_type == ScheduleType.CRON and merged.get("cron_expression"):
+            try:
+                from datetime import datetime
+
+                from croniter import croniter
+
+                itr = croniter(merged["cron_expression"], datetime.now(ZoneInfo(merged.get("timezone") or "UTC")))
+                first = itr.get_next(datetime)
+                second = itr.get_next(datetime)
+                seconds = int((second - first).total_seconds())
+                return seconds if seconds > 0 else None
+            except Exception:  # noqa: BLE001
+                return None
+        return None
+
+    @staticmethod
     def create(db: Session, data: dict):
+        ScheduleService._map_retry(data)
         automation = db.query(Automation).filter(Automation.id == data["automation_id"]).first()
         if not automation:
             raise NotFoundException("Automação não encontrada")
@@ -114,6 +173,7 @@ class ScheduleService:
             raise ConflictException("Já existe um agendamento com esse nome para essa automação")
 
         ScheduleService._validate_payload(data)
+        ScheduleService._validate_retry_fits_interval(data, data.get("retry_max"), data.get("retry_delay_seconds"))
 
         if "status" not in data:
             data["status"] = ScheduleStatus.ACTIVE if data.get("active", True) else ScheduleStatus.INACTIVE
@@ -122,6 +182,7 @@ class ScheduleService:
 
     @staticmethod
     def update(db: Session, schedule_id: int, data: dict):
+        ScheduleService._map_retry(data)
         schedule = ScheduleService.get(db, schedule_id)
 
         new_automation_id = data.get("automation_id", schedule.automation_id)
@@ -149,6 +210,11 @@ class ScheduleService:
         }
 
         ScheduleService._validate_payload(merged)
+        ScheduleService._validate_retry_fits_interval(
+            merged,
+            data.get("retry_max", getattr(schedule, "retry_max", 0)),
+            data.get("retry_delay_seconds", getattr(schedule, "retry_delay_seconds", 300)),
+        )
 
         if merged["schedule_type"] == ScheduleType.CALENDAR:
             data["interval_value"] = merged["interval_value"]

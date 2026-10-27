@@ -3,9 +3,17 @@
 from datetime import datetime
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 from app.domain.enums import SchedulePolicy, ScheduleStatus, ScheduleType, CalendarType
+
+
+def _clean_retry_on(value: list[str]) -> list[str]:
+    cleaned = [str(v).strip().lower() for v in (value or [])]
+    bad = [v for v in cleaned if v not in ("erro", "timeout")]
+    if bad:
+        raise ValueError("retry_on aceita só 'erro' e 'timeout'.")
+    return cleaned or ["erro", "timeout"]
 
 
 class ScheduleBase(BaseModel):
@@ -22,6 +30,10 @@ class ScheduleBase(BaseModel):
     active: bool = True
     interval_value: Optional[int] = None
     interval_unit: Optional[str] = Field(default=None, max_length=30)
+    # Retentativa automática: 0 a 5 tentativas extras, espera em segundos, em quais falhas.
+    retry_max: int = Field(default=0, ge=0, le=5)
+    retry_delay_seconds: int = Field(default=300, ge=0, le=86400)
+    retry_on: list[str] = Field(default_factory=lambda: ["erro", "timeout"])
 
     @field_validator("interval_value")
     @classmethod
@@ -29,6 +41,11 @@ class ScheduleBase(BaseModel):
         if value is not None and value <= 0:
             raise ValueError("interval_value deve ser maior que zero")
         return value
+
+    @field_validator("retry_on")
+    @classmethod
+    def validate_retry_on(cls, value: list[str]):
+        return _clean_retry_on(value)
 
 
 class ScheduleCreate(ScheduleBase):
@@ -53,6 +70,9 @@ class ScheduleUpdate(BaseModel):
     interval_value: Optional[int] = None
     interval_unit: Optional[str] = Field(default=None, max_length=30)
     misfire_policy: Optional[str] = None
+    retry_max: Optional[int] = Field(default=None, ge=0, le=5)
+    retry_delay_seconds: Optional[int] = Field(default=None, ge=0, le=86400)
+    retry_on: Optional[list[str]] = None
 
     @field_validator("interval_value")
     @classmethod
@@ -61,9 +81,24 @@ class ScheduleUpdate(BaseModel):
             raise ValueError("interval_value deve ser maior que zero")
         return value
 
+    @field_validator("retry_on")
+    @classmethod
+    def validate_retry_on(cls, value: Optional[list[str]]):
+        return None if value is None else _clean_retry_on(value)
+
 
 class ScheduleResponse(ScheduleBase):
     id: int
+    # O modelo guarda retry_on_json; a resposta expõe retry_on.
+    retry_on: list[str] = Field(
+        default_factory=lambda: ["erro", "timeout"],
+        validation_alias=AliasChoices("retry_on", "retry_on_json"),
+    )
+
+    @field_validator("retry_on", mode="before")
+    @classmethod
+    def _retry_on_default(cls, value):
+        return value if isinstance(value, list) and value else ["erro", "timeout"]
     status: Optional[ScheduleStatus] = None
     start_at: Optional[datetime] = None
     end_at: Optional[datetime] = None

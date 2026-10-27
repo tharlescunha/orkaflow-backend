@@ -1383,6 +1383,11 @@ GUIDE.update({
             "- `skip_if_missed`: se o horário passou da tolerância, pula.\n\n"
             "Outros campos: `timezone` (IANA, ex.: `America/Sao_Paulo`; padrão `UTC`), `priority` 1–10, "
             "`runtime_parameters_json` (parâmetros de execução) e `use_default_runtime_parameters`.\n\n"
+            "Retentativa automática: `retry_max` (0 a 5 tentativas extras quando a task deste agendamento falhar), "
+            "`retry_delay_seconds` (espera entre tentativas) e `retry_on` (lista com `erro` e/ou `timeout`). "
+            "Tentativas × espera precisa caber no intervalo do agendamento (senão 400). Cancelada, parada "
+            "forçada e credencial inválida nunca repetem; a tentativa nova tem `execution_mode=retry`, "
+            "`parent_task_id` e `retry_count`.\n\n"
             "404 se a automação não existe; 409 se já há agendamento com o mesmo nome nela; 400 para "
             "timezone inválido ou campos obrigatórios faltando.\n\n" + _BEARER
         ),

@@ -13,7 +13,7 @@ from app.core.exceptions import (
     UnauthorizedException,
     ValidationException,
 )
-from app.services import event_service
+from app.services import event_service, retry_service
 from app.services.credential_health_service import CredentialHealthService
 from app.services.task_events import add_task_log
 from app.core.security import (
@@ -644,6 +644,7 @@ class WorkerService:
                 runner_id=runner.id,
             )
             tasks_finalized += 1
+            retry_service.schedule_retry_if_applicable(self.db, task)
 
             released = self.lock_service.release_task_locks(task.id)
             task_locks_released += len(released)
@@ -954,6 +955,7 @@ class WorkerService:
             self._mark_credentials_valid(task)
             self.automation_trigger_service.create_success_followups(task)
         if is_final:
+            retry_service.schedule_retry_if_applicable(self.db, task)
             event_service.enqueue_for_task(self.db, task)
 
         self._refresh_runner_status(runner, reason="task_finalizada" if is_final else "task_progress")
@@ -1006,6 +1008,7 @@ class WorkerService:
         if payload.status == TaskStatus.FINISHED:
             self._mark_credentials_valid(task)
             self.automation_trigger_service.create_success_followups(task)
+        retry_service.schedule_retry_if_applicable(self.db, task)
         event_service.enqueue_for_task(self.db, task)
 
         self.db.commit()

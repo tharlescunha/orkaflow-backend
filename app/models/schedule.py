@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Enum, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.mssql import JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -61,6 +61,12 @@ class Schedule(Base, BaseModelMixin, TimestampMixin):
     # automática só mexe nos agendamentos que ela mesma pausou.
     paused_reason: Mapped[str | None] = mapped_column(String(60), nullable=True)
     paused_credential_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # Retentativa automática (out/2026): quantas vezes a mais tentar quando a task deste agendamento
+    # falhar, intervalo entre tentativas e em quais falhas ("erro" e/ou "timeout"). 0 = não retenta.
+    retry_max: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    retry_delay_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=300, server_default="300")
+    retry_on_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
     automation = relationship("Automation", back_populates="schedules")
     tasks = relationship("Task", back_populates="schedule")

@@ -227,6 +227,8 @@ class TaskListItem(OrkaBaseSchema):
     items_failed: int
 
     execution_mode: ExecutionMode
+    retry_count: int | None = None
+    parent_task_id: int | None = None
     stop_requested: bool
     correlation_id: str | None = None
     queue_name: str | None = None

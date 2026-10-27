@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 from app.core.exceptions import NotFoundException, ValidationException
 from app.models.runner import Runner
-from app.services import event_service
+from app.services import event_service, retry_service
 from app.services.credential_health_service import CredentialHealthService
 from app.services.task_rules import runner_in_maintenance
 from app.domain.enums import ExecutionMode, RunnerStatus, TaskLogLevel, TaskLogSource, TaskStatus
@@ -75,7 +75,8 @@ class TaskService:
         """
         self.lock_service.release_task_locks(task.id)
         self.capacity.refresh_runner_status_by_id(task.runner_id, reason="task_finalizada")
-        # Eventos "Quando → Então" (out/2026): disparos ficam pendentes para o loop de notificações.
+        # Retentativa automática e eventos "Quando → Então" (out/2026); nenhum dos dois derruba a task.
+        retry_service.schedule_retry_if_applicable(self.db, task)
         event_service.enqueue_for_task(self.db, task)
 
     def _get_automation_name(self, task) -> str | None:
@@ -255,6 +256,8 @@ class TaskService:
             "timeout_seconds": task.timeout_seconds,
             "retry_count": task.retry_count,
             "execution_mode": task.execution_mode,
+            "retry_count": task.retry_count,
+            "parent_task_id": task.parent_task_id,
             "dispatch_attempts": task.dispatch_attempts,
             "stop_requested": task.stop_requested,
             "correlation_id": task.correlation_id,
