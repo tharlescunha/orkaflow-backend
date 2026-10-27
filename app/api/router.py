@@ -31,6 +31,7 @@ from app.api.v1.worker_credentials import router as worker_credentials_router
 
 from app.api.v1.profiles import router as profiles_router
 from app.api.v1.permissions import router as permissions_router
+from app.api.v1.events import router as events_router
 from app.api.v1.notifications import router as notifications_router
 from app.api.v1.env_variables import router as env_variables_router
 from app.api.v1.runner_logs import router as runner_logs_router
@@ -74,6 +75,7 @@ protected_router.include_router(credentials_router)
 protected_router.include_router(dashboard_router)
 protected_router.include_router(permissions_router)
 protected_router.include_router(notifications_router)
+protected_router.include_router(events_router)
 protected_router.include_router(env_variables_router)
 protected_router.include_router(runner_logs_router)
 protected_router.include_router(integration_router)

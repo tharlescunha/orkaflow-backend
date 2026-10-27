@@ -21,6 +21,7 @@ from app.models.runner import Runner
 from app.models.runner_config import RunnerConfig
 from app.models.task import Task
 from app.repositories.lock_repository import LockRepository
+from app.services import event_service
 from app.services.capacity_service import CapacityService
 from app.services.task_events import add_task_error, add_task_log, add_task_log_once
 from app.services.task_rules import (
@@ -105,6 +106,7 @@ class WatchdogService:
         )
         self._release_task_locks(task, now)
         self._release_runner_if_possible(task.runner_id)
+        event_service.enqueue_for_task(self.db, task)
 
     # ------------------------------------------------------------------
     # runners

@@ -107,6 +107,14 @@ Variáveis de ambiente dos robôs (menu Automação > Variáveis; exige administ
 - Alterar: PUT /api/v1/env-variables/{var_id}. Apagar: DELETE (definitivo).
 """,
     "credenciais": """\
+Eventos (menu Integração → Eventos): regras "Quando → Então" por robô. Quando = automação/bot/qualquer +
+gatilho (task_error, task_success, task_timeout, credential_invalid, result_contains chave/valor, exit_code N).
+Então = etapas prévias (ex.: login que guarda {{token}}) + requisição principal com {{variáveis}}
+(automacao, task_id, erro, retorno.campo, credencial, motivo, link_task...). Exemplo: avisar no Teams via
+Power Automate quando a credencial do SAP vencer. Rotas: GET/POST /api/v1/events/rules, PUT/DELETE
+/api/v1/events/rules/{id}, POST /api/v1/events/rules/{id}/test, GET /api/v1/events/runs. A notificação de
+"N falhas seguidas pausa o agendamento e abre chamado" continua separada, em /api/v1/notifications/channel.
+
 Credenciais (menu Segurança): cofre de usuários/senhas/tokens que os robôs usam.
 Saúde: cada credencial tem `status` (valida | nao_verificada | invalida | senha_incorreta | senha_expirada |
 usuario_bloqueado), `status_reason` e `status_task_id`. Quando um robô avisa que a senha não serve, a credencial

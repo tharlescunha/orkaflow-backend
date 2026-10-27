@@ -60,7 +60,8 @@ VARIABLES: list[tuple[str, str, str]] = [
     ("link_task", "Link da última task no painel (exige a URL base do painel)", "http://painel/tasks/42723"),
 ]
 
-_VAR_RE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
+# Aceita ponto no nome ({{retorno.status}}): os eventos expõem os campos do retorno do robô assim.
+_VAR_RE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_.]*)\s*\}\}")
 _SECRET_HEADER_HINTS = ("authorization", "token", "key", "secret", "senha", "password", "cookie")
 
 

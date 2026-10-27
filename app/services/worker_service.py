@@ -13,6 +13,7 @@ from app.core.exceptions import (
     UnauthorizedException,
     ValidationException,
 )
+from app.services import event_service
 from app.services.credential_health_service import CredentialHealthService
 from app.services.task_events import add_task_log
 from app.core.security import (
@@ -952,6 +953,8 @@ class WorkerService:
             # (estados finais já retornaram antes, em _ignore_transition).
             self._mark_credentials_valid(task)
             self.automation_trigger_service.create_success_followups(task)
+        if is_final:
+            event_service.enqueue_for_task(self.db, task)
 
         self._refresh_runner_status(runner, reason="task_finalizada" if is_final else "task_progress")
         self.db.commit()
@@ -1003,6 +1006,7 @@ class WorkerService:
         if payload.status == TaskStatus.FINISHED:
             self._mark_credentials_valid(task)
             self.automation_trigger_service.create_success_followups(task)
+        event_service.enqueue_for_task(self.db, task)
 
         self.db.commit()
         return task
@@ -1164,6 +1168,19 @@ class WorkerService:
             task=task,
             chave=payload.chave,
             sistema=payload.sistema,
+        )
+        event_service.enqueue_for_task(
+            self.db,
+            task,
+            trigger_types=["credential_invalid"],
+            extra={
+                "credencial": credential.label,
+                "credencial_id": credential.id,
+                "motivo": credential.status,
+                "chave": payload.chave,
+                "sistema": payload.sistema,
+                "mensagem": payload.mensagem,
+            },
         )
         self.db.commit()
         return {

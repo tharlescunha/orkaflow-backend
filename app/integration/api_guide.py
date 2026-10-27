@@ -1888,6 +1888,94 @@ GUIDE.update({
 
 # --------------------------------------------------------------- Notifications
 GUIDE.update({
+    "GET /api/v1/events/triggers": {
+        "summary": "Tipos de gatilho dos eventos",
+        "description": (
+            "Eventos (menu Integração → Eventos) são regras \"Quando → Então\": quando uma task de um robô "
+            "termina de certo jeito, o orquestrador faz requisições HTTP (ex.: avisar no Teams via Power "
+            "Automate, abrir chamado no desk). Esta rota lista os gatilhos: `task_error`, `task_success`, "
+            "`task_timeout`, `credential_invalid`, `result_contains` (chave e valor no retorno do robô) e "
+            "`exit_code`.\n\n" + _BEARER
+        ),
+        "example_response": [{"type": "task_error", "label": "Terminou com erro", "description": "A task terminou com erro ou parada forçada."}],
+    },
+    "GET /api/v1/events/variables": {
+        "summary": "Variáveis disponíveis no corpo e nos cabeçalhos dos eventos",
+        "description": (
+            "Use `{{nome}}` no corpo, URL e cabeçalhos. Além destas, cada campo do retorno do robô vira "
+            "`{{retorno.campo}}`.\n\n" + _BEARER
+        ),
+        "example_response": [{"name": "automacao", "description": "Nome da automação", "example": "Automacao_Estoque_PO"}],
+    },
+    "GET /api/v1/events/rules": {
+        "summary": "Lista as regras de evento",
+        "description": "Query opcional `active`. Cada regra traz o escopo, o gatilho, as etapas prévias e o envio principal.\n\n" + _BEARER,
+        "example_response": [
+            {
+                "id": 1, "name": "Avisar no Teams", "active": True, "scope_type": "automation", "scope_id": 16,
+                "scope_label": "Automacao_Estoque_PO", "trigger_type": "credential_invalid",
+                "trigger_label": "Credencial inválida", "trigger_config": {"key": None, "value": None, "code": None},
+                "pre_steps": [], "url": "https://prod-00.westus.logic.azure.com/workflows/.../triggers/manual/paths/invoke",
+                "method": "POST", "headers": {"Content-Type": "application/json"},
+                "body_template": "{\"texto\": \"{{automacao}}: credencial {{credencial}} com {{motivo}}\"}",
+                "timeout_seconds": 15, "last_run_at": None, "last_run_ok": None, "runs_count": 0,
+                "created_at": "2026-10-27T18:00:00Z", "updated_at": None,
+            }
+        ],
+    },
+    "POST /api/v1/events/rules": {
+        "summary": "Cria uma regra de evento (Quando → Então)",
+        "description": (
+            "Campos: `name`, `active`, `scope_type` (automation | bot | all) e `scope_id`, `trigger_type` e "
+            "`trigger_config` (`key`/`value` para result_contains, `code` para exit_code), `pre_steps` (mesmo "
+            "formato das etapas do canal de notificação: login que devolve token, etc.), `url`, `method`, "
+            "`headers`, `body_template` e `timeout_seconds`. A falha de um disparo nunca afeta a task.\n\n" + _BEARER
+        ),
+        "example_request": {
+            "name": "Avisar no Teams", "active": True, "scope_type": "automation", "scope_id": 16,
+            "trigger_type": "credential_invalid", "trigger_config": {}, "pre_steps": [],
+            "url": "https://prod-00.westus.logic.azure.com/workflows/.../triggers/manual/paths/invoke",
+            "method": "POST", "headers": {"Content-Type": "application/json"},
+            "body_template": "{\"texto\": \"{{automacao}}: credencial {{credencial}} com {{motivo}}. {{link_task}}\"}",
+            "timeout_seconds": 15,
+        },
+        "example_response": {"id": 1, "name": "Avisar no Teams", "active": True, "scope_type": "automation", "scope_id": 16, "trigger_type": "credential_invalid", "trigger_label": "Credencial inválida", "trigger_config": {}, "pre_steps": [], "url": "https://...", "method": "POST", "headers": {}, "body_template": "...", "timeout_seconds": 15, "runs_count": 0, "created_at": "2026-10-27T18:00:00Z"},
+    },
+    "GET /api/v1/events/rules/{rule_id}": {
+        "summary": "Detalhe de uma regra de evento",
+        "description": "Mesmo formato da lista. " + _BEARER,
+        "example_response": {"id": 1, "name": "Avisar no Teams", "active": True, "scope_type": "automation", "scope_id": 16, "trigger_type": "credential_invalid", "trigger_label": "Credencial inválida", "trigger_config": {}, "pre_steps": [], "url": "https://...", "method": "POST", "headers": {}, "body_template": "...", "timeout_seconds": 15, "runs_count": 0, "created_at": "2026-10-27T18:00:00Z"},
+    },
+    "PUT /api/v1/events/rules/{rule_id}": {
+        "summary": "Altera uma regra de evento",
+        "description": "Mesmos campos do POST (todos).\n\n" + _BEARER,
+        "example_request": {"name": "Avisar no Teams", "active": False, "scope_type": "all", "scope_id": None, "trigger_type": "task_error", "trigger_config": {}, "pre_steps": [], "url": "https://...", "method": "POST", "headers": {}, "body_template": "{\"texto\": \"{{automacao}} falhou: {{erro_resumo}}\"}", "timeout_seconds": 15},
+        "example_response": {"id": 1, "name": "Avisar no Teams", "active": False, "scope_type": "all", "scope_id": None, "trigger_type": "task_error", "trigger_label": "Terminou com erro", "trigger_config": {}, "pre_steps": [], "url": "https://...", "method": "POST", "headers": {}, "body_template": "...", "timeout_seconds": 15, "runs_count": 0, "created_at": "2026-10-27T18:00:00Z"},
+    },
+    "DELETE /api/v1/events/rules/{rule_id}": {
+        "summary": "Remove uma regra de evento",
+        "description": "O histórico de disparos fica (sem a regra). Prefira desativar (`active=false`) quando puder voltar a usar.\n\n" + _BEARER,
+        "example_response": {"message": "Evento removido."},
+    },
+    "POST /api/v1/events/rules/{rule_id}/test": {
+        "summary": "Dispara a regra agora, para testar",
+        "description": (
+            "Usa a task informada em `task_id`, ou a última task do escopo, ou valores de exemplo. Faz o envio "
+            "de verdade (sem retentativas) e devolve o disparo com requisição, etapas e resposta.\n\n" + _BEARER
+        ),
+        "example_request": {"task_id": 42724},
+        "example_response": {"id": 7, "rule_id": 1, "rule_name": "Avisar no Teams", "task_id": 42724, "automation_name": "Automacao_Estoque_PO", "trigger_type": "credential_invalid", "trigger_label": "Credencial inválida", "status": "test", "ok": True, "status_code": 202, "error": None, "response_snippet": "", "started_at": "2026-10-27T18:00:00Z", "finished_at": "2026-10-27T18:00:01Z", "created_at": "2026-10-27T18:00:00Z", "variables": {"automacao": "Automacao_Estoque_PO"}, "details": {"request_preview": {}, "steps": []}},
+    },
+    "GET /api/v1/events/runs": {
+        "summary": "Histórico de disparos dos eventos",
+        "description": "Query: `rule_id`, `task_id`, `limit` (até 200). Status: pending, running, success, error, test.\n\n" + _BEARER,
+        "example_response": [{"id": 7, "rule_id": 1, "rule_name": "Avisar no Teams", "task_id": 42724, "automation_name": "Automacao_Estoque_PO", "trigger_type": "credential_invalid", "trigger_label": "Credencial inválida", "status": "success", "ok": True, "status_code": 202, "error": None, "response_snippet": "", "started_at": "2026-10-27T18:00:00Z", "finished_at": "2026-10-27T18:00:01Z", "created_at": "2026-10-27T18:00:00Z"}],
+    },
+    "GET /api/v1/events/runs/{run_id}": {
+        "summary": "Detalhe de um disparo (variáveis, requisição enviada, etapas e resposta)",
+        "description": "Segredos extraídos pelas etapas (ex.: token) aparecem mascarados.\n\n" + _BEARER,
+        "example_response": {"id": 7, "rule_id": 1, "rule_name": "Avisar no Teams", "task_id": 42724, "automation_name": "Automacao_Estoque_PO", "trigger_type": "credential_invalid", "trigger_label": "Credencial inválida", "status": "success", "ok": True, "status_code": 202, "error": None, "response_snippet": "", "started_at": "2026-10-27T18:00:00Z", "finished_at": "2026-10-27T18:00:01Z", "created_at": "2026-10-27T18:00:00Z", "variables": {"automacao": "Automacao_Estoque_PO"}, "details": {"request_preview": {}, "steps": []}},
+    },
     "GET /api/v1/notifications/channel": {
         "summary": "Configuração do aviso de falhas (canal HTTP)",
         "description": (
