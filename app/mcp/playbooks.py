@@ -22,8 +22,13 @@ Como trabalhar:
 6. Horários: as rotas devolvem UTC (ISO 8601); ao mostrar ao usuário converta para Brasília (UTC-3).
 7. Valores de credenciais nunca são mostrados (só prévia mascarada) e não devem ser pedidos de volta ao usuário.
 
+8. **Robô novo sempre usa a biblioteca Maestro** (assunto maestro). Ao ajudar alguém a criar um bot para o
+   orquestrador, gere o main.py com `from maestro import Maestro`, `with maestro:` e `maestro.success/fail`,
+   e cadastre o bot com reads_task_file_arg=false. Nunca proponha o jeito antigo (JSON por argumento,
+   print e sys.exit) para robô novo; ele existe só para os robôs que já estão rodando.
+
 Assuntos do como_fazer: operacao, bots_e_versoes, automacoes, maquinas, agendamentos, variaveis, credenciais,
-notificacoes, repositorios, consultas.
+notificacoes, repositorios, consultas, maestro, novidades.
 """
 
 PLAYBOOKS: dict[str, str] = {
@@ -37,6 +42,9 @@ Operação do dia a dia (menu Operação):
   start_date/end_date, automation_id, error_type). Logs completos: GET /api/v1/task-logs/task/{task_id}?limit=500.
 - Rodar agora: criar_task (usa os parâmetros padrão; 'parametros' sobrescreve). Só existe uma task aberta por
   automação: se já houver, o erro diz qual.
+- Acompanhar uma task: progress_current/progress_total/progress_text (etapa que o robô informou pelo Maestro),
+  anexos em GET /api/v1/tasks/{id}/attachments (download em /attachments/{att_id}/download), print do erro em
+  error_screenshot_base64 de GET /api/v1/task-errors/task/{id}.
 - Task parada na fila (waiting): o campo waiting_reason do detalhe explica (task da mesma automação aberta,
   grupo exclusivo ocupado ou nenhum runner elegível). Encadeamento: parent_task_id (quem originou; execution_mode
   trigger = gatilho de sucesso, retry = retentativa) e children (tasks que ela originou).
@@ -51,7 +59,9 @@ Bots e versões (menu Automação):
    name, description e suggested_version). Depois criar o bot: POST /api/v1/bots/ com name, repository_id,
    technology (python), source_type (git), source_url
    (URL do Git), entrypoint (ex.: main.py), execution_mode (background = sem tela, pode paralelo; foreground = usa a
-   tela, 1 por máquina), timeout_default (segundos) e initial_version (ex.: 1.0.0). Cria junto a primeira versão.
+   tela, 1 por máquina), timeout_default (segundos), initial_version (ex.: 1.0.0) e reads_task_file_arg=false
+   (robô novo usa o Maestro e não lê o JSON por argumento; só robô antigo fica true). Cria junto a primeira versão.
+   Padrão obrigatório para robô novo: main.py com a biblioteca Maestro (assunto maestro).
 3. Alterar bot (descrição, timeout, entrypoint, URL, ativo): PUT /api/v1/bots/{bot_id} (só os campos que mudam).
 4. Nova versão a partir do Git: verificar_versao_bot e criar_versao_bot (já fazem tudo). Manualmente:
    GET /api/v1/bot-versions/git-preview?bot_id=ID e depois POST /api/v1/bot-versions/ com os dados sugeridos.
@@ -86,6 +96,9 @@ Máquinas / runners (menu Execução):
 - Quais automações rodam nela: vínculos ficam na automação (assunto automacoes, passo 3).
 - Remover máquina antiga do painel: DELETE /api/v1/runners/{runner_id} (só faz sentido para máquina desligada).
 - Máquinas novas se cadastram sozinhas quando o worker é instalado; não crie runner manualmente.
+- Manutenção: PUT /api/v1/runners/{id}/config com maintenance_mode=true (ou PUT /runners/{id} com
+  status "maintenance"). A máquina deixa de receber tasks novas, as que estavam na fila dela voltam para
+  outra máquina na hora, e a task em execução termina normalmente. maintenance_mode=false libera.
 """,
     "agendamentos": """\
 Agendamentos (menu Automação):
@@ -155,6 +168,45 @@ Notificações de falha (menu Integração > Notificações; exige administrador
 Repositórios (áreas que agrupam bots, automações e credenciais):
 - Listar: GET /api/v1/repositories/. Criar: POST /api/v1/repositories/ com name (único) e description.
 - Alterar: PUT /api/v1/repositories/{id}. Desativar: DELETE /api/v1/repositories/{id} (lógico).
+""",
+    "maestro": """\
+Maestro: a biblioteca que o robô importa para conversar com o orquestrador. É o padrão para TODO robô novo.
+Nada a instalar nas máquinas (o worker coloca o pacote no venv de cada bot). Na máquina do desenvolvedor:
+pip install git+https://github.com/tharlescunha/maestro.git ; python -m maestro init cria um task.json de exemplo.
+Esqueleto do main.py (gere assim quando alguém pedir um robô novo):
+    from maestro import Maestro, CredencialInvalida
+    maestro = Maestro()                      # producao=True por padrão; producao=False na máquina do dev
+    def main():
+        filial = maestro.param("filial", default="010")   # parâmetro da automação
+        senha = maestro.credential("sap_senha")           # credencial cadastrada (nunca imprima)
+        maestro.step(1, 2, "Login")                       # etapa: aparece na lista e no detalhe da task
+        maestro.info("Lendo pedidos", total=120)          # log; warning()/error() idem
+        maestro.attach("C:/saida/pedidos.xlsx", "Pedidos") # anexo na task (5 MB, 10 por task)
+        maestro.next_automation("Aprovacao_Pedidos")      # outra automação entra na fila ao terminar bem
+        maestro.success("120 pedidos", result={"pedidos": 120}, items_processed=120)
+    if __name__ == "__main__":
+        with maestro:                                     # exceção vira erro na task com traceback
+            main()
+Senha vencida/usuário bloqueado: raise CredencialInvalida("sap_senha", motivo="senha_expirada", mensagem=...) —
+o orquestrador pausa os agendamentos e bloqueia tasks novas. Robô de tela: Maestro(screenshot_on_error=True).
+Outras chamadas: require, params, env, heartbeat (laços longos sem log), timer, screenshot, fail(category
+business|system). Cadastro do bot: reads_task_file_arg=false. Guia completo com exemplos: tela Execução →
+Guia do Bot. Robôs antigos (JSON por argumento, print, sys.exit) continuam funcionando sem mudar nada.
+""",
+    "novidades": """\
+O que entrou em outubro/2026 (tudo já em produção):
+- Saúde de credenciais: status na credencial, robô avisa senha vencida, agendamentos pausam, 409 em task nova.
+- Eventos (Integração → Eventos): regras "Quando → Então" por robô com requisições HTTP (ex.: Teams).
+- Retentativa automática por agendamento (retry_max, retry_delay_seconds, retry_on).
+- Calendários (dias úteis, feriados, janelas) no agendamento, e "N-ésimo dia útil do mês".
+- Fila com explicação: waiting_reason na task; encadeamento visível (parent_task_id, children, execution_mode
+  trigger).
+- Grupos exclusivos completos: GET/PUT/DELETE, membros e lock atual.
+- Maestro (assunto maestro): biblioteca do robô; progresso, print no erro, anexos, next_automation por nome,
+  contadores de itens. Bot ganhou reads_task_file_arg.
+- Guia do Bot refeito (Execução → Guia do Bot) com o Guia do Maestro.
+- Menu "Notificações" virou "Chamado de erro" (mesma tela: N falhas seguidas → chamado no desk).
+- Máquina em manutenção devolve as tasks da fila dela para outra máquina.
 """,
     "consultas": """\
 Consultas úteis:

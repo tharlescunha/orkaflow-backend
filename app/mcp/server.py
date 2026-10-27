@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["MCP"])
 
 SUPPORTED_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
-SERVER_INFO = {"name": "orkaflow", "title": "OrkaFlow - orquestrador de robôs", "version": "1.0.0"}
+SERVER_INFO = {"name": "orkaflow", "title": "OrkaFlow - orquestrador de robôs", "version": "1.1.0"}
 INSTRUCTIONS = (
     "Ferramentas do OrkaFlow, o orquestrador de robôs RPA da ALZ Grãos. Você pode consultar e operar tudo que o "
     "painel faz (operação, máquinas, bots, versões, automações, agendamentos, variáveis, credenciais, notificações).\n"
@@ -41,7 +41,11 @@ INSTRUCTIONS = (
     "- Status das tasks: waiting/ready (na fila), scheduled, running, stop_requested, finished (sucesso), "
     "error/timeout/forced_stop (falha), canceled. As ferramentas prontas mostram horário de Brasília; chamar_api "
     "devolve UTC.\n"
-    "- Valores de credenciais nunca são mostrados; não peça nem repita senhas além do necessário para gravá-las."
+    "- Valores de credenciais nunca são mostrados; não peça nem repita senhas além do necessário para gravá-las.\n"
+    "- Robô novo é sempre feito com a biblioteca Maestro (como_fazer('maestro')): main.py com "
+    "`from maestro import Maestro`, `with maestro:` e success/fail; bot cadastrado com reads_task_file_arg=false. "
+    "O jeito antigo (JSON por argumento, print, sys.exit) é só para robôs que já existem.\n"
+    "- Novidades de outubro/2026 (eventos, calendários, retentativa, Maestro...): como_fazer('novidades')."
 )
 
 PARSE_ERROR = -32700

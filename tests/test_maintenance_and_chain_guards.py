@@ -79,6 +79,26 @@ class MaintenanceModeTests(unittest.TestCase):
         with self.assertRaises(ValidationException):
             TaskService(self.db).create_manual_task(payload, created_by=self.f.user.id)
 
+    def test_entering_maintenance_returns_queued_tasks_to_other_machines(self):
+        """Out/2026: tasks já pré-vinculadas à máquina voltam para a fila ao marcar manutenção."""
+        from app.schemas.runner import RunnerConfigUpdate
+
+        other = self.f.runner("r2", host="HOST2")
+        auto, ver = self.f.automation(runners=[self.r, other])
+        queued = self.f.task(auto, ver, runner=self.r)          # WAITING pré-vinculada à r1
+        running = self.f.task(self.auto, self.ver, status=TaskStatus.RUNNING, runner=self.r)
+
+        RunnerService(self.db).update_config(self.r.id, RunnerConfigUpdate(maintenance_mode=True))
+        self.db.refresh(queued)
+        self.db.refresh(running)
+        self.assertIsNone(queued.runner_id)
+        self.assertIn("manutenção", queued.waiting_reason)
+        self.assertEqual(running.runner_id, self.r.id)          # o que roda, termina
+
+        DispatchService(self.db).dispatch_pending_tasks()
+        self.db.refresh(queued)
+        self.assertEqual(queued.runner_id, other.id)
+
     def test_panel_shows_maintenance_even_with_running_task(self):
         self.f.task(self.auto, self.ver, status=TaskStatus.RUNNING, runner=self.r)
         self._set_maintenance(True)

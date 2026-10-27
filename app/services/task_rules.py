@@ -59,6 +59,45 @@ def as_aware(dt: datetime | None) -> datetime | None:
     return dt
 
 
+def release_waiting_tasks_of_runner(db, runner, *, reason: str) -> int:
+    """Tasks WAITING pré-vinculadas à máquina voltam para a fila (runner_id NULL) com o motivo.
+
+    Usado quando a máquina entra em manutenção: o despachante já não escolhe a máquina para
+    tasks novas; isto cuida das que já estavam na fila dela. Nada em execução é tocado."""
+    from sqlalchemy import select
+
+    from app.domain.enums import TaskLogLevel, TaskLogSource, TaskStatus
+    from app.models.task import Task
+    from app.services.task_events import add_task_log
+
+    tasks = list(
+        db.execute(
+            select(Task)
+            .where(Task.runner_id == runner.id)
+            .where(Task.status == TaskStatus.WAITING)
+            .where(Task.runner_claimed_at.is_(None))
+        ).scalars().all()
+    )
+    label = getattr(runner, "label", None) or getattr(runner, "name", None) or f"#{runner.id}"
+    for task in tasks:
+        task.runner_id = None
+        task.waiting_reason = f"Devolvida à fila: a máquina '{label}' entrou em manutenção."
+        task.last_update_at = datetime.now(UTC)
+        db.add(task)
+        add_task_log(
+            db,
+            task.id,
+            f"Máquina '{label}' entrou em manutenção: task devolvida à fila para outra máquina.",
+            level=TaskLogLevel.INFO,
+            source=TaskLogSource.DISPATCHER,
+            event_code="RUNNER_MAINTENANCE_REQUEUE",
+            runner_id=runner.id,
+        )
+    if tasks:
+        db.flush()
+    return len(tasks)
+
+
 def runner_in_maintenance(runner) -> bool:
     """Máquina em manutenção: pelo status (API) ou pela caixa "Modo manutenção" do Runner Config.
 

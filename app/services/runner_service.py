@@ -7,7 +7,7 @@ from app.repositories.runner_repository import RunnerRepository
 from app.services.task_rules import MAX_CONCURRENCY_CAP, MIN_CONCURRENCY
 from app.schemas.runner import RunnerConfigUpdate, RunnerCreate, RunnerRead, RunnerUpdate
 from datetime import UTC, datetime
-from app.services.task_rules import runner_in_maintenance
+from app.services.task_rules import release_waiting_tasks_of_runner, runner_in_maintenance
 from app.schemas.runner_overview import (
     RunnerOverviewLinkedBot,
     RunnerOverviewLastExecution,
@@ -24,6 +24,7 @@ from app.schemas.runner_overview import (
 class RunnerService:
     def __init__(self, db: Session):
         self.repo = RunnerRepository(db)
+        self.db = db
 
     def _build_runner_read(self, runner):
         running_tasks_count = self.repo.count_running_tasks(runner.id)
@@ -101,6 +102,19 @@ class RunnerService:
         return self._build_runner_read(runner)
 
     def update(self, runner_id: int, data: RunnerUpdate):
+        return self._update_with_maintenance_guard(runner_id, data)
+
+    def _update_with_maintenance_guard(self, runner_id: int, data: RunnerUpdate):
+        before = self.repo.get_by_id(runner_id)
+        was_in_maintenance = runner_in_maintenance(before) if before else False
+        result = self._update_runner(runner_id, data)
+        after = self.repo.get_by_id(runner_id)
+        if after is not None and not was_in_maintenance and runner_in_maintenance(after):
+            release_waiting_tasks_of_runner(self.db, after, reason="maquina_em_manutencao")
+            self.db.commit()
+        return result
+
+    def _update_runner(self, runner_id: int, data: RunnerUpdate):
         runner = self.repo.get_by_id(runner_id)
         if not runner:
             raise NotFoundException("Runner não encontrado.")
@@ -171,7 +185,13 @@ class RunnerService:
         if "polling_interval" in update_data and update_data["polling_interval"] < 5:
             raise ValidationException("polling_interval deve ser maior ou igual a 5.")
 
-        return self.repo.update_config(config, **update_data)
+        entering_maintenance = bool(update_data.get("maintenance_mode")) and not bool(config.maintenance_mode)
+        updated = self.repo.update_config(config, **update_data)
+        if entering_maintenance:
+            # Out/2026: tasks já pré-vinculadas a esta máquina voltam para a fila na hora, para
+            # outra máquina pegar; o que está em execução termina normalmente.
+            release_waiting_tasks_of_runner(self.db, runner, reason="maquina_em_manutencao")
+        return updated
     
     def _task_to_overview_item(self, task):
         execution_duration_seconds = None
