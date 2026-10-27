@@ -84,6 +84,7 @@ class Task(Base, BaseModelMixin, TimestampMixin):
     parameters = relationship("TaskParameter", back_populates="task")
     logs = relationship("TaskLog", back_populates="task")
     errors = relationship("TaskError", back_populates="task")
+    attachments = relationship("TaskAttachment", back_populates="task")
     locks = relationship("Lock", back_populates="task")
 
     telemetry = relationship(

@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, Query, status
+from urllib.parse import quote
+
+from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_db
@@ -6,6 +8,7 @@ from app.domain.enums import TaskStatus
 from app.models.user import User
 from app.schemas.task import (
     TaskActionResponse,
+    TaskAttachmentListResponse,
     TaskCreate,
     TaskFilterOptionsResponse,
     TaskListResponse,
@@ -110,6 +113,23 @@ def request_stop(
         message="Solicitação de parada registrada com sucesso.",
         task_id=task.id,
         status=task.status,
+    )
+
+
+@router.get("/{task_id}/attachments", response_model=TaskAttachmentListResponse)
+def list_task_attachments(task_id: int, service: TaskService = Depends(get_task_service)):
+    items, total = service.list_task_attachments(task_id)
+    return TaskAttachmentListResponse(items=items, total=total)
+
+
+@router.get("/{task_id}/attachments/{attachment_id}/download")
+def download_task_attachment(task_id: int, attachment_id: int, service: TaskService = Depends(get_task_service)):
+    attachment = service.get_task_attachment(task_id, attachment_id)
+    safe_name = quote(attachment.filename)
+    return Response(
+        content=attachment.content,
+        media_type=attachment.content_type or "application/octet-stream",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{safe_name}"},
     )
 
 

@@ -13,10 +13,10 @@ não entende vira log comum. Falha ao tratar uma linha do Maestro nunca derruba 
 
 | Ponto | Decisão |
 |---|---|
-| Nomes das chamadas | Inglês: `info`, `warning`, `error`, `success`, `step`, `screenshot`, `next_bot` |
+| Nomes das chamadas | Inglês: `info`, `warning`, `error`, `success`, `step`, `screenshot`, `next_automation` |
 | Flag produção | `Maestro(producao=True)`; **padrão True** se não passar. `producao=False` = modo local |
 | Print no erro | `screenshot_on_error=False` por padrão; o robô liga quando é de tela |
-| Chamar outro robô | O robô passa o **nome** da automação; o orquestrador coloca na fila. Permitido para automações ativas do **mesmo repositório** (área) do robô que chamou (decisão minha, pelo caso "beholder" que decide na hora qual robô chamar; cross-repositório é recusado com log) |
+| Chamar outra automação (`next_automation`) | O robô passa o **nome da automação** (não do bot): ela leva parâmetros, credenciais e padrões dela, como em "Nova task"; `parametros` é opcional e só sobrescreve. Permitido para automações ativas do **mesmo repositório** (área) do robô que chamou; cross-repositório é recusado com log. Decidido pelo Tharles em 27/10 |
 | Instalação | **Nada a instalar no robô.** O worker instala o `maestro` em todo venv de bot (versão fixada, vem junto com o worker). Na máquina do desenvolvedor: `pip install` apontando para o Git do worker (ver "Distribuição") |
 | Argumento do JSON | Novo campo no bot: "robô lê o arquivo da task por argumento". Bots atuais ficam marcados (nada muda); bot novo nasce desmarcado e o worker chama só `python main.py` |
 
@@ -80,11 +80,11 @@ maestro.warning("Linha sem CNPJ", linha=37)
 maestro.error("Falha ao abrir ME2L")             # só loga; não encerra
 maestro.step(3, 7, "Enviando ao SAP")
 maestro.screenshot("Tela do SAP")                 # tira print agora (mss/Pillow se houver; senão PowerShell)
-maestro.attach("C:/saida.xlsx", "Relatório")     # evidência (fase 2)
-maestro.next_bot("Aprovacao_Pedidos", parametros={"lote": "A"})
+maestro.attach("C:/saida.xlsx", "Relatório")     # anexo (até 5 MB, 10 por task): aparece na task para baixar
+maestro.next_automation("Aprovacao_Pedidos", parametros={"lote": "A"})
 
 # encerramento
-maestro.success("1200 itens", result={"itens": 1200})          # grava resultado, sai com 0
+maestro.success("1200 itens", result={"itens": 1200}, items_processed=1200, items_failed=3)   # contadores opcionais; sai com 0
 maestro.fail("Planilha não encontrada", category="business", retryable=False)   # sai com 1
 raise CredencialInvalida("sap_senha", motivo="senha_expirada", mensagem="...")  # sai com 3
 
@@ -110,7 +110,7 @@ retentativa automática usa `retryable`.
 ## Modo local (`producao=False`)
 
 Lê `./task.json` (modelo gerado por `python -m maestro init`), imprime logs no console com
-cor, grava `./resultado.json`, `screenshot()` salva em `./screenshots/`, `next_bot()` só
+cor, grava `./resultado.json`, `screenshot()` salva em `./screenshots/`, `next_automation()` só
 imprime. Nenhum acesso à rede.
 
 ## O que muda em cada repositório
@@ -144,12 +144,18 @@ imprime. Nenhum acesso à rede.
 - Desenvolvedor: `pip install "git+https://<git do worker>#subdirectory=maestro"` ou o `.whl`
   publicado no feed do DevOps. Como o pacote não tem dependências, qualquer Python 3.10+ serve.
 
+## Ctrl+Espaço e guia
+
+O pacote tem anotações de tipo, `py.typed` e docstring com exemplo em cada chamada: o editor (VS Code,
+PyCharm) mostra a lista e a descrição ao digitar `maestro.`. O Guia do Bot (task 9) ganha uma seção
+"Guia do Maestro" com todas as chamadas e exemplos (pedido do Tharles, 27/10).
+
 ## Ordem de entrega
 
 1. Pacote `maestro` (entrada, logs, success/fail, credencial, modo local) + worker entendendo
    `log` e `end` + instalação no venv. Nenhum comportamento muda para bot sem Maestro.
 2. Print no erro: `screenshot` no worker, envio no `send_error`, imagem na tela da task.
 3. Progresso: colunas, rota, worker, tela.
-4. `next_bot` por nome (backend) e campo "lê arquivo por argumento" (backend, worker, tela).
+4. `next_automation` por nome (backend) e campo "lê arquivo por argumento" (backend, worker, tela).
 5. Evidências de arquivo (`attach`).
 6. Guia do Bot novo.

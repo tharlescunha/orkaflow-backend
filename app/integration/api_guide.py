@@ -1690,6 +1690,23 @@ GUIDE.update({
         ),
         "example_response": _TASK_EXAMPLE,
     },
+    "GET /api/v1/tasks/{task_id}/attachments": {
+        "summary": "Arquivos anexados à task pelo robô",
+        "description": (
+            "Lista os arquivos que o robô anexou com `maestro.attach(caminho, descricao)` (planilhas, PDFs, logs): "
+            "nome, tipo, tamanho e descrição. O conteúdo vem em `/attachments/{attachment_id}/download`. "
+            "Limites: 5 MB por arquivo, 10 por task. 404 se a task não existe.\n\n" + _BEARER
+        ),
+        "example_response": {
+            "items": [{"id": 7, "task_id": 42723, "filename": "pedidos.xlsx", "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "size_bytes": 18234, "description": "Pedidos lidos", "created_at": "2026-10-21T13:44:00Z"}],
+            "total": 1,
+        },
+    },
+    "GET /api/v1/tasks/{task_id}/attachments/{attachment_id}/download": {
+        "summary": "Baixa um arquivo anexado à task",
+        "description": "Devolve o arquivo (binário) com `Content-Disposition: attachment`. 404 se não existe.\n\n" + _BEARER,
+        "example_response": {},
+    },
     "GET /api/v1/tasks/{task_id}/parameters": {
         "summary": "Parâmetros gravados na task",
         "description": (
@@ -2699,6 +2716,16 @@ GUIDE.update({
             "code": "SAP_LOGIN",
         },
         "example_response": {"message": "Erro registrado com sucesso.", "task_id": 42730},
+    },
+    "POST /api/v1/worker/tasks/{task_id}/attachments": {
+        "summary": "Arquivo anexado pelo robô (maestro.attach)",
+        "description": (
+            _WORKER + "O worker lê o arquivo na máquina e manda em base64 (`content_base64`), com `filename`, "
+            "`content_type` e `description`. Limites: 5 MB por arquivo e 10 por task (400 acima disso). "
+            "Aparece no detalhe da task para download." + _WORKER_AUTH_ERRORS
+        ),
+        "example_request": {"uuid": "6f1c2a9e-0000-4000-8000-000000000005", "token": "token-do-runner-exemplo", "filename": "pedidos.xlsx", "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "description": "Pedidos lidos", "content_base64": "UEsDBBQABgAIAAAAIQ..."},
+        "example_response": {"task_id": 42730, "attachment_id": 7, "size_bytes": 18234},
     },
     "POST /api/v1/worker/tasks/{task_id}/progress": {
         "summary": "Etapa atual do robô (maestro.step)",

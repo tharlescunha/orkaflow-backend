@@ -1213,6 +1213,55 @@ class WorkerService:
         except Exception:  # noqa: BLE001
             logger.exception("Falha ao marcar credenciais como válidas para a task %s", task.id)
 
+    ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024
+    ATTACHMENTS_PER_TASK = 10
+
+    def create_task_attachment(self, task_id: int, payload):
+        """Arquivo anexado pelo robô (maestro.attach). Limites: 5 MB por arquivo, 10 por task."""
+        from app.models.task_attachment import TaskAttachment
+
+        runner = self._authenticate_runner(payload.uuid, payload.token)
+        task = self.task_repository.get_by_id(task_id)
+        self._validate_task_runner_ownership(task, runner)
+
+        try:
+            content = base64.b64decode(payload.content_base64, validate=True)
+        except (binascii.Error, ValueError):
+            raise ValidationException("Anexo inválido: envie o conteúdo em base64 válido.")
+        if not content:
+            raise ValidationException("Anexo vazio.")
+        if len(content) > self.ATTACHMENT_MAX_BYTES:
+            raise ValidationException(f"Anexo acima do limite de {self.ATTACHMENT_MAX_BYTES} bytes.")
+
+        count = self.db.execute(
+            select(func.count(TaskAttachment.id)).where(TaskAttachment.task_id == task.id)
+        ).scalar_one()
+        if int(count or 0) >= self.ATTACHMENTS_PER_TASK:
+            raise ValidationException(f"A task já tem {self.ATTACHMENTS_PER_TASK} anexos (limite).")
+
+        filename = (payload.filename or "arquivo").strip().replace("\\", "/").rsplit("/", 1)[-1][:255] or "arquivo"
+        attachment = TaskAttachment(
+            task_id=task.id,
+            filename=filename,
+            content_type=(payload.content_type or "application/octet-stream")[:120],
+            size_bytes=len(content),
+            description=(payload.description or None),
+            content=content,
+        )
+        self.db.add(attachment)
+        self.db.flush()
+        add_task_log(
+            self.db,
+            task.id,
+            f"Arquivo anexado: {filename} ({len(content)} bytes)" + (f" · {payload.description}" if payload.description else ""),
+            level=TaskLogLevel.INFO,
+            source=TaskLogSource.WORKER,
+            event_code="attachment",
+            runner_id=runner.id,
+        )
+        self.db.commit()
+        return {"task_id": task.id, "attachment_id": attachment.id, "size_bytes": attachment.size_bytes}
+
     def update_task_progress(self, task_id: int, payload):
         """Etapa atual do robô (maestro.step). Só enquanto a task está em execução."""
         runner = self._authenticate_runner(payload.uuid, payload.token)

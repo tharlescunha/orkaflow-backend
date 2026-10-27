@@ -21,6 +21,7 @@ from app.models.runner_config import RunnerConfig
 from app.models.schedule import Schedule
 from app.models.task import Task
 from app.models.task_error import TaskError
+from app.models.task_attachment import TaskAttachment
 from app.models.task_log import TaskLog
 from app.models.task_parameter import TaskParameter
 from app.models.task_telemetry import TaskTelemetry
@@ -58,6 +59,7 @@ __all__ = [
     "TaskParameter",
     "TaskLog",
     "TaskError",
+    "TaskAttachment",
     "Lock",
     "Notification",
     "AuditLog",

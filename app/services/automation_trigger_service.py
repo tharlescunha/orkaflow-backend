@@ -62,7 +62,7 @@ class AutomationTriggerService:
         requests_by_target: dict[int, dict[str, Any]] | None = None
 
         if workflow_requests is not None:
-            # Out/2026 (maestro.next_bot): o robô pode pedir pelo nome e não precisa de gatilho
+            # Out/2026 (maestro.next_automation): o robô pode pedir pelo nome e não precisa de gatilho
             # cadastrado, desde que a automação seja ativa e do mesmo repositório (área) da
             # automação que terminou. Fora disso, o pedido é ignorado com aviso na task.
             requests_by_target = {}
@@ -350,7 +350,13 @@ class AutomationTriggerService:
                 }
 
         if extra_parameters:
-            runtime_parameters = self._load_runtime_parameters(final_parameters_by_name)
+            # Padrões de execução da automação destino < herdados do pai < o que o robô passou.
+            # (Antes, qualquer parâmetro passado pelo robô descartava os padrões da automação.)
+            runtime_parameters: dict[str, Any] = {}
+            default_runtime = getattr(target_automation, "default_runtime_parameters_json", None)
+            if isinstance(default_runtime, dict):
+                runtime_parameters.update(default_runtime)
+            runtime_parameters.update(self._load_runtime_parameters(final_parameters_by_name))
             runtime_parameters.update(extra_parameters)
             final_parameters_by_name["runtime_parameters_json"] = {
                 "parameter_name": "runtime_parameters_json",

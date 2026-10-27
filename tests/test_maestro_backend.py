@@ -1,4 +1,4 @@
-"""Maestro no backend (out/2026): progresso da task, next_bot por nome e campo do argumento do bot."""
+"""Maestro no backend (out/2026): progresso da task, next_automation por nome e campo do argumento do bot."""
 import json
 import unittest
 from types import SimpleNamespace
@@ -62,7 +62,7 @@ class NextBotByNameTests(unittest.TestCase):
     def _logs(self, task):
         return [log.message for log in self.db.execute(select(TaskLog).where(TaskLog.task_id == task.id)).scalars()]
 
-    def test_next_bot_by_name_without_registered_trigger(self):
+    def test_next_automation_by_name_without_registered_trigger(self):
         parent = self._parent({"pedidos": 2, "orkaflow": {"next_automations": [{"automation": "Aprovacao_Pedidos", "parameters": {"lote": "A"}}]}})
         children = self.svc.create_success_followups(parent)
         self.assertEqual([c.automation_id for c in children], [self.b.id])
@@ -92,6 +92,16 @@ class NextBotByNameTests(unittest.TestCase):
         parent = self.f.task(self.a, self.a_v, status=TaskStatus.FINISHED, runner=self.r)
         children = self.svc.create_success_followups(parent)
         self.assertEqual([c.automation_id for c in children], [self.b.id])
+
+    def test_next_automation_inherits_automation_defaults_and_overrides(self):
+        self.b.default_runtime_parameters_json = {"lote": "PADRAO", "filial": "010"}
+        self.b.default_parameters_json = {"dados_acesso": {"credential_id": 1, "itens": {"sap_senha": None}}}
+        self.db.flush()
+        parent = self._parent({"orkaflow": {"next_automations": [{"automation": "Aprovacao_Pedidos", "parameters": {"lote": "A"}}]}})
+        children = self.svc.create_success_followups(parent)
+        params = {p.parameter_name: p.parameter_value for p in self.svc.task_repository.get_parameters(children[0].id)}
+        self.assertEqual(json.loads(params["runtime_parameters_json"]), {"lote": "A", "filial": "010"})
+        self.assertIn("dados_acesso", json.loads(params["parameters_json"]))
 
     def test_workflow_with_registered_trigger_keeps_trigger_settings(self):
         self.db.add(AutomationSuccessTrigger(source_automation_id=self.a.id, target_automation_id=self.b.id, active=True, priority_override=9))

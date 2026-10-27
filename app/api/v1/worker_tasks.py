@@ -15,6 +15,8 @@ from app.schemas.worker import (
     WorkerCredentialAlertResponse,
     WorkerTaskFinishRequest,
     WorkerTaskNextRequest,
+    WorkerTaskAttachmentCreate,
+    WorkerTaskAttachmentResponse,
     WorkerTaskProgressRequest,
     WorkerTaskProgressResponse,
     WorkerTaskNextResponse,
@@ -102,6 +104,13 @@ def update_task_progress(task_id: int, payload: WorkerTaskProgressRequest, db: S
     """Etapa atual do robô (maestro.step): aparece na lista e no detalhe da task."""
     service = WorkerService(db)
     return service.update_task_progress(task_id, payload)
+
+
+@router.post("/{task_id}/attachments", response_model=WorkerTaskAttachmentResponse)
+def create_task_attachment(task_id: int, payload: WorkerTaskAttachmentCreate, db: Session = Depends(get_db)):
+    """Arquivo anexado pelo robô (maestro.attach): aparece no detalhe da task para download."""
+    service = WorkerService(db)
+    return service.create_task_attachment(task_id, payload)
 
 
 @router.post("/{task_id}/credential-alert", response_model=WorkerCredentialAlertResponse)

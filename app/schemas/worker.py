@@ -184,6 +184,23 @@ class WorkerTaskProgressResponse(OrkaBaseSchema):
     progress_text: str | None = None
 
 
+class WorkerTaskAttachmentCreate(OrkaBaseSchema):
+    """Arquivo anexado pelo robô (maestro.attach), em base64. Até 5 MB por arquivo."""
+
+    uuid: str
+    token: str
+    filename: str = Field(..., min_length=1, max_length=255)
+    content_type: str | None = Field(default=None, max_length=120)
+    description: str | None = Field(default=None, max_length=300)
+    content_base64: str
+
+
+class WorkerTaskAttachmentResponse(OrkaBaseSchema):
+    task_id: int
+    attachment_id: int
+    size_bytes: int
+
+
 class WorkerTaskErrorCreate(OrkaBaseSchema):
     uuid: str
     token: str

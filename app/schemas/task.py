@@ -137,6 +137,23 @@ class TaskActionResponse(OrkaBaseSchema):
     status: TaskStatus
 
 
+class TaskAttachmentRead(OrkaBaseSchema):
+    """Arquivo anexado pelo robô (maestro.attach); o conteúdo vem pela rota de download."""
+
+    id: int
+    task_id: int
+    filename: str
+    content_type: str
+    size_bytes: int
+    description: str | None = None
+    created_at: datetime
+
+
+class TaskAttachmentListResponse(OrkaBaseSchema):
+    items: list[TaskAttachmentRead]
+    total: int
+
+
 class TaskChildRead(OrkaBaseSchema):
     id: int
     automation_id: int

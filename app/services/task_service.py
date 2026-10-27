@@ -2,6 +2,8 @@ import logging
 import json
 from datetime import UTC, datetime
 
+from sqlalchemy import select
+
 from app.core.exceptions import NotFoundException, ValidationException
 from app.models.runner import Runner
 from app.services import event_service, retry_service
@@ -381,6 +383,36 @@ class TaskService:
         if not task:
             raise NotFoundException("Task não encontrada.")
         return self._serialize_task_read(task)
+
+    def list_task_attachments(self, task_id: int):
+        from app.models.task_attachment import TaskAttachment
+
+        if not self.repository.get_by_id(task_id):
+            raise NotFoundException("Task não encontrada.")
+        rows = self.db.execute(
+            select(
+                TaskAttachment.id, TaskAttachment.task_id, TaskAttachment.filename, TaskAttachment.content_type,
+                TaskAttachment.size_bytes, TaskAttachment.description, TaskAttachment.created_at,
+            )
+            .where(TaskAttachment.task_id == task_id)
+            .order_by(TaskAttachment.id.asc())
+        ).all()
+        items = [
+            {
+                "id": r.id, "task_id": r.task_id, "filename": r.filename, "content_type": r.content_type,
+                "size_bytes": r.size_bytes, "description": r.description, "created_at": r.created_at,
+            }
+            for r in rows
+        ]
+        return items, len(items)
+
+    def get_task_attachment(self, task_id: int, attachment_id: int):
+        from app.models.task_attachment import TaskAttachment
+
+        attachment = self.db.get(TaskAttachment, attachment_id)
+        if not attachment or attachment.task_id != task_id:
+            raise NotFoundException("Anexo não encontrado.")
+        return attachment
 
     def get_task_parameters(self, task_id: int):
         task = self.repository.get_by_id(task_id)
