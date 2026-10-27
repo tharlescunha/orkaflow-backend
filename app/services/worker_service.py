@@ -55,6 +55,7 @@ from app.services.capacity_service import (
     runner_max_concurrency,
 )
 from app.services.lock_service import LockService
+from app.services.queue_reasons import describe_wait_reason, set_waiting_reason
 from app.services.task_events import add_task_error, add_task_log
 from app.services.task_rules import (
     runner_in_maintenance,
@@ -690,6 +691,15 @@ class WorkerService:
                     # Automação já em execução: não é claimável agora, tenta o próximo.
                     continue
 
+                # Out/2026: as mesmas regras que o claim aplicaria (automação ocupada, grupo
+                # exclusivo). Pular aqui evita a task da frente travar a fila inteira, e o
+                # motivo fica registrado na task.
+                reason = describe_wait_reason(self.task_repository, candidate)
+                if reason is not None:
+                    set_waiting_reason(self.db, candidate, reason, source=TaskLogSource.DISPATCHER)
+                    self.db.commit()
+                    continue
+
                 return {
                     "found": True,
                     "task_id": candidate.id,
@@ -806,6 +816,7 @@ class WorkerService:
                 runner_id=runner.id,
                 runner_claimed_at=now,
                 last_update_at=now,
+                waiting_reason=None,
                 dispatch_attempts=func.coalesce(Task.dispatch_attempts, 0) + 1,
             )
             .execution_options(synchronize_session=False)

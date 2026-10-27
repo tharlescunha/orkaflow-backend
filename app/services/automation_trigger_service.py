@@ -177,7 +177,7 @@ class AutomationTriggerService:
                 "status": TaskStatus.WAITING,
                 "requested_start_at": None,
                 "timeout_seconds": bot.timeout_default or 3600,
-                "execution_mode": ExecutionMode.API,
+                "execution_mode": ExecutionMode.TRIGGER,
                 "correlation_id": parent_task.correlation_id,
                 "queue_name": parent_task.queue_name,
                 "inactivity_timeout_seconds": parent_task.inactivity_timeout_seconds,

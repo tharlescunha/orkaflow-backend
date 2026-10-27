@@ -60,6 +60,8 @@ class ExecutionMode(str, Enum):
     RETRY = "retry"
     REPROCESS = "reprocess"
     API = "api"
+    # Criada pelo gatilho de sucesso (encadeamento) de outra task (out/2026).
+    TRIGGER = "trigger"
 
 
 class TaskLogLevel(str, Enum):

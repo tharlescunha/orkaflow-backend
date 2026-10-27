@@ -63,6 +63,7 @@ _TASK_EXAMPLE = {
     "execution_mode": "scheduled",
     "dispatch_attempts": 1,
     "stop_requested": False,
+    "waiting_reason": None,
     "correlation_id": None,
     "queue_name": None,
     "inactivity_timeout_seconds": None,
@@ -70,6 +71,18 @@ _TASK_EXAMPLE = {
     "created_at": "2026-10-21T13:39:58Z",
     "updated_at": "2026-10-21T13:45:14Z",
     "execution_duration_seconds": 312,
+    "children": [
+        {
+            "id": 42724,
+            "automation_id": 13,
+            "automation_name": "Estoque PO - conferência",
+            "status": "finished",
+            "execution_mode": "trigger",
+            "retry_count": 0,
+            "created_at": "2026-10-21T13:45:15Z",
+            "finished_at": "2026-10-21T13:52:40Z",
+        }
+    ],
     "parameters": [
         {
             "id": 9001,
@@ -1526,7 +1539,11 @@ GUIDE.update({
             "Quando a forma plural é enviada, a singular é ignorada.\n\n"
             "Status: `waiting`/`ready` (fila), `scheduled` (aguardando `requested_start_at`), `running`, "
             "`stop_requested` (parada pedida), `finished` (sucesso), `error`/`timeout`/`forced_stop` (falha), "
-            "`canceled`.\n\n" + _BEARER
+            "`canceled`.\n\n"
+            "Fila com explicação: em `waiting`, `waiting_reason` diz por que a task ainda não foi para um runner "
+            "(task aberta da mesma automação, grupo exclusivo ocupado ou nenhum runner elegível); vazio quando "
+            "ela está só esperando o próximo ciclo. `execution_mode=trigger` + `parent_task_id` = criada pelo "
+            "gatilho de sucesso de outra task; `retry` = retentativa automática.\n\n" + _BEARER
         ),
         "example_response": {
             "items": [
@@ -1535,8 +1552,8 @@ GUIDE.update({
                     "runner_name", "runner_label", "runner_display_name", "created_by", "created_by_name",
                     "schedule_id", "schedule_name", "priority", "status", "requested_start_at", "started_at",
                     "finished_at", "last_update_at", "created_at", "items_processed", "items_failed",
-                    "execution_mode", "stop_requested", "correlation_id", "queue_name", "final_message",
-                    "execution_duration_seconds",
+                    "execution_mode", "retry_count", "parent_task_id", "stop_requested", "waiting_reason",
+                    "correlation_id", "queue_name", "final_message", "execution_duration_seconds",
                 )}
             ],
             "total": 1,
@@ -1554,7 +1571,8 @@ GUIDE.update({
             "- `requested_start_at`: com fuso (ex.: `2026-10-22T08:00:00-03:00`); a task fica `scheduled` até a hora. "
             "Sem fuso dá 400.\n"
             "- `bot_version_id`: omitido, usa a versão em uso do bot (Release > ativa mais nova).\n"
-            "- `execution_mode`: `manual` (padrão), `api`, `retry`, `reprocess`, `scheduled`.\n"
+            "- `execution_mode`: `manual` (padrão), `api`, `retry`, `reprocess`, `scheduled` "
+            "(`trigger` é reservado ao gatilho de sucesso).\n"
             "- `correlation_id`: id livre para você rastrear a execução no seu sistema.\n"
             "- `parameters`: lista de `parameter_name`/`parameter_value`. Os nomes especiais "
             "`parameters_json` (JSON válido) e `runtime_parameters_json` (objeto JSON) são entregues ao robô; "
@@ -1603,6 +1621,9 @@ GUIDE.update({
             "(`result_json`), contadores de itens, parâmetros, telemetria (CPU/memória), dados da máquina "
             "(`runner_details`) e uso da máquina (`runner_usage`). `execution_duration_seconds` conta até agora "
             "se ainda está rodando.\n\n"
+            "Encadeamento visível: `parent_task_id` aponta para a task que originou esta (gatilho de sucesso "
+            "→ `execution_mode=trigger`; retentativa → `retry`), e `children` lista as tasks que esta originou. "
+            "Em `waiting`, `waiting_reason` explica por que ainda está na fila.\n\n"
             "Para acompanhar uma task criada via API, consulte esta rota até o status ser final "
             "(`finished`, `error`, `timeout`, `forced_stop` ou `canceled`). 404 se não existe.\n\n" + _BEARER
         ),

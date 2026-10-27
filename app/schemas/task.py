@@ -137,6 +137,17 @@ class TaskActionResponse(OrkaBaseSchema):
     status: TaskStatus
 
 
+class TaskChildRead(OrkaBaseSchema):
+    id: int
+    automation_id: int
+    automation_name: str | None = None
+    status: TaskStatus
+    execution_mode: ExecutionMode
+    retry_count: int = 0
+    created_at: datetime
+    finished_at: datetime | None = None
+
+
 class TaskRead(OrkaBaseSchema):
     id: int
 
@@ -176,6 +187,8 @@ class TaskRead(OrkaBaseSchema):
     execution_mode: ExecutionMode
     dispatch_attempts: int
     stop_requested: bool
+    # Por que está na fila (só quando status=waiting): automação ocupada, grupo exclusivo, sem runner.
+    waiting_reason: str | None = None
 
     correlation_id: str | None = None
     queue_name: str | None = None
@@ -188,6 +201,8 @@ class TaskRead(OrkaBaseSchema):
     execution_duration_seconds: int | None = None
 
     parameters: list[TaskParameterRead] = []
+    # Tasks criadas a partir desta (gatilho de sucesso, retentativa automática, parent_task_id via API).
+    children: list[TaskChildRead] = []
 
     telemetry: TaskTelemetryRead | None = None
     runner_details: TaskRunnerRead | None = None
@@ -230,6 +245,7 @@ class TaskListItem(OrkaBaseSchema):
     retry_count: int | None = None
     parent_task_id: int | None = None
     stop_requested: bool
+    waiting_reason: str | None = None
     correlation_id: str | None = None
     queue_name: str | None = None
 

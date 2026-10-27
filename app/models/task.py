@@ -68,6 +68,8 @@ class Task(Base, BaseModelMixin, TimestampMixin):
     queue_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     inactivity_timeout_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     runner_claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Por que a task está esperando na fila (escrito pelo dispatcher/next-task; limpo ao vincular/assumir).
+    waiting_reason: Mapped[str | None] = mapped_column(String(300), nullable=True)
 
     automation = relationship("Automation", back_populates="tasks")
     bot_version = relationship("BotVersion", back_populates="tasks")

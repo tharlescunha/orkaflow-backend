@@ -19,7 +19,8 @@ from app.services.capacity_service import (
     normalize_host,
     runner_max_concurrency,
 )
-from app.services.task_events import add_task_log, add_task_log_once
+from app.services.task_events import add_task_log
+from app.services.queue_reasons import WaitReason, describe_wait_reason, set_waiting_reason
 from app.services.task_rules import (
     EXECUTING_STATUSES,
     MODE_FOREGROUND,
@@ -92,15 +93,10 @@ class DispatchService:
 
             # Regras de junho/2026 preservadas: uma task aberta por automação e
             # exclusão mútua por grupo (task reservada ou lock ativo do grupo).
-            if self.task_repo.get_open_task_for_automation(
-                task.automation_id, exclude_task_id=task.id
-            ):
-                continue
-            if self.task_repo.get_reserved_task_for_exclusive_groups(
-                task.automation_id, exclude_task_id=task.id
-            ):
-                continue
-            if self.task_repo.has_active_lock_for_exclusive_groups(task.automation_id):
+            # Out/2026: cada espera deixa o motivo na task (fila com explicação).
+            reason = describe_wait_reason(self.task_repo, task)
+            if reason is not None:
+                set_waiting_reason(self.db, task, reason, source=TaskLogSource.DISPATCHER)
                 continue
 
             candidates = []
@@ -113,16 +109,16 @@ class DispatchService:
                 candidates.append(runner)
 
             if not candidates:
-                add_task_log_once(
+                set_waiting_reason(
                     self.db,
-                    task.id,
-                    (
-                        "Aguardando runner: nenhum runner elegível (online, habilitado, vinculado "
-                        f"à automação e com capacidade para o modo {mode.upper()}) no momento."
+                    task,
+                    WaitReason(
+                        (
+                            "Aguardando runner: nenhum runner elegível (online, habilitado, vinculado "
+                            f"à automação e com capacidade para o modo {mode.upper()}) no momento."
+                        ),
+                        "DISPATCH_NO_ELIGIBLE_RUNNER",
                     ),
-                    "DISPATCH_NO_ELIGIBLE_RUNNER",
-                    within=NO_RUNNER_LOG_WINDOW,
-                    level=TaskLogLevel.INFO,
                     source=TaskLogSource.DISPATCHER,
                 )
                 continue
@@ -132,6 +128,7 @@ class DispatchService:
                 key=lambda r: (self._load(r.id, executing, pinned), r.id),
             )
 
+            task.waiting_reason = None
             task.runner_id = runner.id
             task.last_update_at = datetime.now(UTC)
             task.dispatch_attempts = (task.dispatch_attempts or 0) + 1

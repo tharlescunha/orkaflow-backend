@@ -37,6 +37,9 @@ Operação do dia a dia (menu Operação):
   start_date/end_date, automation_id, error_type). Logs completos: GET /api/v1/task-logs/task/{task_id}?limit=500.
 - Rodar agora: criar_task (usa os parâmetros padrão; 'parametros' sobrescreve). Só existe uma task aberta por
   automação: se já houver, o erro diz qual.
+- Task parada na fila (waiting): o campo waiting_reason do detalhe explica (task da mesma automação aberta,
+  grupo exclusivo ocupado ou nenhum runner elegível). Encadeamento: parent_task_id (quem originou; execution_mode
+  trigger = gatilho de sucesso, retry = retentativa) e children (tasks que ela originou).
 - Parar: parar_task (parada gentil; na fila cancela). Parada forçada: POST /api/v1/tasks/{id}/force-stop (só se a
   gentil não resolver; marca forced_stop na hora). Cancelar task agendada/na fila: POST /api/v1/tasks/{id}/cancel.
 - Log bruto da máquina (worker e saída dos robôs): GET /api/v1/runner-logs/?runner_id=ID (aceita task_id, level, search).

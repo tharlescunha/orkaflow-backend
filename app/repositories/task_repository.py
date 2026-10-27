@@ -215,6 +215,17 @@ class TaskRepository:
         )
         return self.db.execute(stmt).scalar_one_or_none() is not None
 
+    def list_children(self, task_id: int, *, limit: int = 50) -> Sequence[Task]:
+        """Tasks criadas a partir desta (gatilho de sucesso, retentativa, encadeamento via API)."""
+        stmt = (
+            select(Task)
+            .options(selectinload(Task.automation))
+            .where(Task.parent_task_id == task_id)
+            .order_by(Task.id.asc())
+            .limit(limit)
+        )
+        return self.db.execute(stmt).scalars().all()
+
     def get_open_task_for_automation(
         self,
         automation_id: int,
