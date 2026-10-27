@@ -1,3 +1,5 @@
+> **Feito em 27/10/2026:** a tela foi refeita (`orkaflow-frontend/src/pages/guide/bot-guide-page.tsx`) com tudo abaixo e o Guia do Maestro. Este arquivo fica só como histórico.
+
 # Ajustes para o Guia do Bot
 
 Tela: menu **Execução → Guia do Bot** (`orkaflow-frontend/src/pages/runner-config/worker-registration-page.tsx`).
