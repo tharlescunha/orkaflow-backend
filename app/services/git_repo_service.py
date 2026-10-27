@@ -27,7 +27,7 @@ _URL_CREDENTIALS_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)[^/\s@]+@")
 _FIELD_SEP = "\x1f"
 _LOG_FORMAT = _FIELD_SEP.join(["%H", "%an", "%aI", "%s"])
 
-_locks: dict[int, threading.Lock] = {}
+_locks: dict[int | str, threading.Lock] = {}
 _locks_guard = threading.Lock()
 
 
@@ -62,7 +62,7 @@ class GitRepoError(ValidationException):
     pass
 
 
-def _bot_lock(bot_id: int) -> threading.Lock:
+def _bot_lock(bot_id: int | str) -> threading.Lock:
     with _locks_guard:
         return _locks.setdefault(bot_id, threading.Lock())
 
@@ -71,15 +71,52 @@ def cache_root() -> Path:
     return heartbeat_dir().parent / "git-cache"
 
 
+@dataclass
+class GitInspection:
+    """O que dá para saber de um repositório só pela URL (tela de Novo bot)."""
+
+    name: str
+    description: str | None
+    branch: str
+    head: GitCommit
+    latest_tag: str | None
+    suggested_version: str
+
+
+_README_CANDIDATES = ("README.md", "readme.md", "README.MD", "Readme.md", "README.txt", "README")
+_VERSION_TAG_RE = re.compile(r"^v?(\d+(?:\.\d+){0,3})$", re.IGNORECASE)
+
+
+def _name_from_url(url: str) -> str:
+    tail = url.rstrip("/").split("/")[-1]
+    tail = tail.split(":")[-1]  # git@host:grupo/repo.git
+    if tail.lower().endswith(".git"):
+        tail = tail[:-4]
+    return tail or "bot"
+
+
+def _description_from_readme(text: str) -> str | None:
+    """Primeiro parágrafo de texto do README (pula títulos, badges, imagens e linhas de código)."""
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith(("#", "!", "[![", "<", "```", "---", "|", "=")):
+            continue
+        line = re.sub(r"[*_`]", "", line)
+        line = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", line)
+        return line[:500]
+    return None
+
+
 class GitRepoService:
-    def __init__(self, bot_id: int, source_url: str | None):
+    def __init__(self, bot_id: int | None, source_url: str | None, cache_key: str | None = None):
         if not source_url or not source_url.strip():
             raise GitRepoError("O bot não tem URL do repositório cadastrada.")
         if shutil.which("git") is None:
             raise GitRepoError("Git não está instalado no servidor do backend.")
         self.bot_id = bot_id
         self.url = source_url.strip()
-        self.repo_dir = cache_root() / f"bot_{bot_id}.git"
+        self.lock_key: int | str = bot_id if bot_id is not None else f"inspect:{cache_key}"
+        self.repo_dir = cache_root() / (f"bot_{bot_id}.git" if bot_id is not None else f"inspect_{cache_key}.git")
 
     # ------------------------------------------------------------------ git
     def _git(self, *args: str, cwd: Path | None = None, check: bool = True) -> str:
@@ -157,7 +194,7 @@ class GitRepoService:
     # --------------------------------------------------------------- público
     def snapshot(self, branch: str | None = None, since_commit: str | None = None) -> GitSnapshot:
         """Atualiza o cache e devolve o último commit da branch e os commits desde `since_commit`."""
-        with _bot_lock(self.bot_id):
+        with _bot_lock(self.lock_key):
             self._ensure_cache()
 
             target = (branch or "").strip() or self._default_branch()
@@ -191,6 +228,50 @@ class GitRepoService:
                 tags=tags,
                 base_found=base_found,
             )
+
+
+    def inspect(self) -> GitInspection:
+        """Valida a URL (clone/fetch) e lê nome, descrição do README, último commit e última tag."""
+        with _bot_lock(self.lock_key):
+            self._ensure_cache()
+            branch = self._default_branch()
+            head = self._log("-1", f"refs/heads/{branch}", "--", check=False)
+            if not head:
+                raise GitRepoError(f"O repositório não tem commits na branch '{branch}'.")
+            head_commit, _ = head[0]
+
+            tags_out = self._git("tag", "--sort=-v:refname", "--merged", f"refs/heads/{branch}",
+                                 cwd=self.repo_dir, check=False)
+            latest_tag = next((tag.strip() for tag in tags_out.splitlines() if tag.strip()), None)
+
+            description = None
+            for candidate in _README_CANDIDATES:
+                content = self._git("show", f"refs/heads/{branch}:{candidate}", cwd=self.repo_dir, check=False)
+                if content.strip():
+                    description = _description_from_readme(content)
+                    break
+
+        match = _VERSION_TAG_RE.match(latest_tag or "")
+        suggested = match.group(1) if match else "1.0.0"
+        return GitInspection(
+            name=_name_from_url(mask_url_credentials(self.url)),
+            description=description,
+            branch=branch,
+            head=head_commit,
+            latest_tag=latest_tag,
+            suggested_version=suggested,
+        )
+
+
+def inspect_source(source_url: str | None) -> GitInspection:
+    """Tela de Novo bot: confere se o link funciona e traz o que o Git sabe sobre ele."""
+    import hashlib
+
+    url = (source_url or "").strip()
+    if not url:
+        raise GitRepoError("Informe o link do repositório.")
+    key = hashlib.sha256(url.encode("utf-8")).hexdigest()[:16]
+    return GitRepoService(None, url, cache_key=key).inspect()
 
 
 def _friendly_error(detail: str) -> str:

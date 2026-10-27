@@ -2,6 +2,7 @@ from datetime import datetime
 
 from pydantic import Field
 
+from app.schemas.bot_version import GitCommitRead
 from app.schemas.common import OrkaBaseSchema
 
 
@@ -68,3 +69,18 @@ class BotListResponse(OrkaBaseSchema):
     items: list[BotListItem]
     total: int
     
+
+class BotSourceInspect(OrkaBaseSchema):
+    source_url: str = Field(..., min_length=1, max_length=500)
+
+
+class BotSourceInspection(OrkaBaseSchema):
+    """Tela de Novo bot: o que o Git sabe sobre o link, antes de salvar."""
+
+    name: str
+    description: str | None = None
+    branch: str
+    repository: str  # URL sem usuário/token
+    head: GitCommitRead
+    latest_tag: str | None = None
+    suggested_version: str

@@ -3,8 +3,9 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.core.database import get_db
-from app.schemas.bot import BotCreate, BotListResponse, BotRead, BotUpdate
+from app.schemas.bot import BotCreate, BotListResponse, BotRead, BotSourceInspect, BotSourceInspection, BotUpdate
 from app.services.bot_service import BotService
+from app.services.git_repo_service import inspect_source, mask_url_credentials
 
 router = APIRouter(prefix="/bots", tags=["Bots"])
 
@@ -26,6 +27,27 @@ def list_bots(
         repository_id=repository_id,
         active=active,
     )
+
+
+@router.post("/inspect-source", response_model=BotSourceInspection)
+def inspect_bot_source(payload: BotSourceInspect, _=Depends(get_current_user)):
+    """Confere se o link do Git funciona e traz nome, descrição, último commit e última tag (nada é gravado)."""
+    info = inspect_source(payload.source_url)
+    return {
+        "name": info.name,
+        "description": info.description,
+        "branch": info.branch,
+        "repository": mask_url_credentials(payload.source_url.strip()),
+        "head": {
+            "hash": info.head.hash,
+            "short": info.head.short,
+            "author": info.head.author,
+            "committed_at": info.head.committed_at,
+            "message": info.head.message,
+        },
+        "latest_tag": info.latest_tag,
+        "suggested_version": info.suggested_version,
+    }
 
 
 @router.get("/{bot_id}", response_model=BotRead)

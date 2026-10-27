@@ -929,6 +929,33 @@ GUIDE.update({
             "total": 1,
         },
     },
+    "POST /api/v1/bots/inspect-source": {
+        "summary": "Confere o link do Git e lê nome, descrição e última tag (antes de cadastrar o bot)",
+        "description": (
+            "Faz o mesmo clone que a máquina vai fazer, então um link que falha aqui falharia no worker. "
+            "**Não grava nada.** Devolve o nome sugerido (do repositório), a descrição (primeiro parágrafo do "
+            "README), o último commit da branch padrão, a última tag e a versão sugerida (a tag sem o `v`, "
+            "ou `1.0.0` se não houver tag).\n\n"
+            "Corpo: `source_url` (com token dentro, se for repositório privado; ele nunca volta na resposta).\n\n"
+            "Use antes de `POST /api/v1/bots/` para preencher `name`, `description` e `initial_version`.\n\n" + _BEARER
+        ),
+        "example_request": {"source_url": "https://git.exemplo.com/rpa/bot-estoque-po.git"},
+        "example_response": {
+            "name": "bot-estoque-po",
+            "description": "Extrai o estoque do SAP todo dia.",
+            "branch": "main",
+            "repository": "https://git.exemplo.com/rpa/bot-estoque-po.git",
+            "head": {
+                "hash": "b2c3d4e5f60718293a4b5c6d7e8f901234567890",
+                "short": "b2c3d4e",
+                "author": "Maria Souza",
+                "committed_at": "2026-10-20T16:00:00Z",
+                "message": "Ajusta timeout do SAP",
+            },
+            "latest_tag": "v1.2.0",
+            "suggested_version": "1.2.0",
+        },
+    },
     "POST /api/v1/bots/": {
         "summary": "Cadastra um bot e sua versão inicial",
         "description": (

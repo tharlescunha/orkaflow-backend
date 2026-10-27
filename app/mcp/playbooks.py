@@ -44,7 +44,9 @@ Operação do dia a dia (menu Operação):
     "bots_e_versoes": """\
 Bots e versões (menu Automação):
 1. Repositório (área) do bot: GET /api/v1/repositories/ (crie com POST se não existir; veja assunto repositorios).
-2. Criar o bot: POST /api/v1/bots/ com name, repository_id, technology (python), source_type (git), source_url
+2. Conferir o link do Git primeiro: POST /api/v1/bots/inspect-source com source_url (valida o acesso e traz
+   name, description e suggested_version). Depois criar o bot: POST /api/v1/bots/ com name, repository_id,
+   technology (python), source_type (git), source_url
    (URL do Git), entrypoint (ex.: main.py), execution_mode (background = sem tela, pode paralelo; foreground = usa a
    tela, 1 por máquina), timeout_default (segundos) e initial_version (ex.: 1.0.0). Cria junto a primeira versão.
 3. Alterar bot (descrição, timeout, entrypoint, URL, ativo): PUT /api/v1/bots/{bot_id} (só os campos que mudam).
