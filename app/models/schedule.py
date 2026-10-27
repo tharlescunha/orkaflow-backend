@@ -74,6 +74,11 @@ class Schedule(Base, BaseModelMixin, TimestampMixin):
         ForeignKey("calendars.id", ondelete="SET NULL"), nullable=True, index=True
     )
     calendar_policy: Mapped[str] = mapped_column(String(10), nullable=False, default="defer", server_default="defer")
+    # "No N-ésimo dia útil do mês às HH:MM": calendar_type fica MONTH (1 mês) e estes dois campos
+    # dizem o dia útil (1 = primeiro) e a hora. Dias úteis e feriados vêm do calendário do agendamento
+    # (sem calendário: segunda a sexta, sem feriados).
+    business_day_of_month: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    time_of_day: Mapped[str | None] = mapped_column(String(5), nullable=True)
 
     automation = relationship("Automation", back_populates="schedules")
     calendar = relationship("Calendar", back_populates="schedules")

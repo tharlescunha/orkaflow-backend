@@ -183,6 +183,39 @@ def is_day_allowed_for_schedule(schedule: Schedule, when_utc: datetime) -> bool:
     return day_blocked_reason(calendar, when_utc.astimezone(tz).date()) is None
 
 
+# ------------------------------------------------------------------ N-ésimo dia útil do mês
+def nth_business_day(calendar: Calendar | None, year: int, month: int, n: int) -> date | None:
+    """Data do N-ésimo dia útil do mês (1 = primeiro). Sem calendário: segunda a sexta, sem feriados."""
+    day = date(year, month, 1)
+    count = 0
+    while day.month == month:
+        blocked = day_blocked_reason(calendar, day) if calendar is not None else (day.weekday() > 4)
+        if not blocked:
+            count += 1
+            if count == n:
+                return day
+        day += timedelta(days=1)
+    return None
+
+
+def next_business_day_occurrence(
+    calendar: Calendar | None, n: int, time_of_day: str, after_local: datetime
+) -> datetime | None:
+    """Próxima ocorrência estritamente depois de `after_local` (mesmo fuso)."""
+    hour, minute = (int(p) for p in time_of_day.split(":")[:2])
+    year, month = after_local.year, after_local.month
+    for _ in range(24):
+        day = nth_business_day(calendar, year, month, n)
+        if day is not None:
+            candidate = datetime.combine(day, time(hour, minute), tzinfo=after_local.tzinfo)
+            if candidate > after_local:
+                return candidate
+        month += 1
+        if month > 12:
+            month, year = 1, year + 1
+    return None
+
+
 # ------------------------------------------------------------------ CRUD
 def _validate(data: dict) -> None:
     weekdays = data.get("weekdays")

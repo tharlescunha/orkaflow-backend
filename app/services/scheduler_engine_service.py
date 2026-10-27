@@ -244,6 +244,9 @@ class SchedulerEngineService:
             return self._normalize_utc(schedule.next_run_at)
 
         if schedule.schedule_type == ScheduleType.CALENDAR:
+            if getattr(schedule, "business_day_of_month", None):
+                # "N-ésimo dia útil do mês": a primeira ocorrência é a próxima no futuro, não "agora".
+                return self._compute_next_calendar_after(schedule, now_utc)
             return now_utc
 
         if schedule.schedule_type == ScheduleType.CRON:
@@ -582,6 +585,16 @@ class SchedulerEngineService:
 
         calendar_type = schedule.calendar_type or CalendarType.ONCE
         value = schedule.interval_value or 1
+
+        business_day = getattr(schedule, "business_day_of_month", None)
+        if business_day:
+            calendar = getattr(schedule, "calendar", None)
+            if calendar is not None and not calendar.active:
+                calendar = None
+            occurrence = calendar_service.next_business_day_occurrence(
+                calendar, int(business_day), schedule.time_of_day or "08:00", local_base
+            )
+            return self._to_utc(occurrence) if occurrence else None
 
         if calendar_type == CalendarType.ONCE:
             return None

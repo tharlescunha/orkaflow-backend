@@ -37,6 +37,9 @@ def upgrade() -> None:
     with op.batch_alter_table("schedules") as batch:
         batch.add_column(sa.Column("calendar_id", sa.Integer(), nullable=True))
         batch.add_column(sa.Column("calendar_policy", sa.String(length=10), nullable=False, server_default="defer"))
+        # "No N-ésimo dia útil do mês às HH:MM" (usa os dias úteis e feriados do calendário).
+        batch.add_column(sa.Column("business_day_of_month", sa.Integer(), nullable=True))
+        batch.add_column(sa.Column("time_of_day", sa.String(length=5), nullable=True))
         batch.create_foreign_key(
             "fk_schedules_calendar_id_calendars", "calendars", ["calendar_id"], ["id"], ondelete="SET NULL"
         )
@@ -47,6 +50,8 @@ def downgrade() -> None:
     with op.batch_alter_table("schedules") as batch:
         batch.drop_index("ix_schedules_calendar_id")
         batch.drop_constraint("fk_schedules_calendar_id_calendars", type_="foreignkey")
+        batch.drop_column("time_of_day")
+        batch.drop_column("business_day_of_month")
         batch.drop_column("calendar_policy")
         batch.drop_column("calendar_id")
     op.drop_index("ix_calendars_active", table_name="calendars")

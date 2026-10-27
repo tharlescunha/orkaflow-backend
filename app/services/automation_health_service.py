@@ -347,6 +347,8 @@ class AutomationHealthService:
     @staticmethod
     def _build_rule_label(schedule: Schedule, expected_interval_seconds: int | None) -> str | None:
         if schedule.schedule_type == ScheduleType.CALENDAR:
+            if getattr(schedule, "business_day_of_month", None):
+                return f"Dia útil {schedule.business_day_of_month} do mês às {schedule.time_of_day or '08:00'}"
             if schedule.calendar_type == CalendarType.ONCE:
                 return "Once"
 

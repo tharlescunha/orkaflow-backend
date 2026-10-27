@@ -159,6 +159,34 @@ class ScheduleService:
         return None
 
     @staticmethod
+    def _normalize_business_day(data: dict) -> None:
+        """'No N-ésimo dia útil do mês': exige calendar_type=month, intervalo 1 e hora HH:MM."""
+        n = data.get("business_day_of_month")
+        if n in (None, "", 0):
+            if "business_day_of_month" in data:
+                data["business_day_of_month"] = None
+            return
+        n = int(n)
+        if n < 1 or n > 23:
+            raise ValidationException("O dia útil do mês precisa estar entre 1 e 23.")
+        if data.get("schedule_type", ScheduleType.CALENDAR) != ScheduleType.CALENDAR:
+            raise ValidationException("'Dia útil do mês' só vale para agendamento do tipo calendário.")
+        time_of_day = str(data.get("time_of_day") or "").strip()
+        try:
+            hours, minutes = time_of_day.split(":")
+            if not (0 <= int(hours) <= 23 and 0 <= int(minutes) <= 59):
+                raise ValueError
+        except ValueError as exc:
+            raise ValidationException("Informe o horário do dia útil no formato HH:MM.") from exc
+        data["business_day_of_month"] = n
+        data["time_of_day"] = time_of_day
+        data["calendar_type"] = CalendarType.MONTH
+        data["interval_value"] = 1
+        data["interval_unit"] = "months"
+        # O motor recalcula a primeira ocorrência (senão rodaria na hora, como calendário comum).
+        data["next_run_at"] = None
+
+    @staticmethod
     def _validate_calendar(db: Session, data: dict) -> None:
         calendar_id = data.get("calendar_id")
         if calendar_id in (None, "", 0):
@@ -188,6 +216,7 @@ class ScheduleService:
             raise ConflictException("Já existe um agendamento com esse nome para essa automação")
 
         ScheduleService._validate_payload(data)
+        ScheduleService._normalize_business_day(data)
         ScheduleService._validate_retry_fits_interval(data, data.get("retry_max"), data.get("retry_delay_seconds"))
 
         if "status" not in data:
@@ -226,6 +255,17 @@ class ScheduleService:
         }
 
         ScheduleService._validate_payload(merged)
+        if "business_day_of_month" in data or "time_of_day" in data:
+            merged_bd = {
+                **merged,
+                "business_day_of_month": data.get("business_day_of_month", getattr(schedule, "business_day_of_month", None)),
+                "time_of_day": data.get("time_of_day", getattr(schedule, "time_of_day", None)),
+            }
+            ScheduleService._normalize_business_day(merged_bd)
+            for key in ("business_day_of_month", "time_of_day", "calendar_type", "interval_value", "interval_unit", "next_run_at"):
+                if key in merged_bd:
+                    data[key] = merged_bd[key]
+                    merged[key] = merged_bd[key]
         ScheduleService._validate_retry_fits_interval(
             merged,
             data.get("retry_max", getattr(schedule, "retry_max", 0)),

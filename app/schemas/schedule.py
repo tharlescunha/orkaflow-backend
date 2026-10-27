@@ -52,6 +52,9 @@ class ScheduleBase(BaseModel):
     # Calendário de dias úteis (opcional) e o que fazer num horário não permitido.
     calendar_id: Optional[int] = None
     calendar_policy: str = "defer"
+    # "No N-ésimo dia útil do mês às HH:MM" (com calendar_type=month).
+    business_day_of_month: Optional[int] = Field(default=None, ge=1, le=23)
+    time_of_day: Optional[str] = Field(default=None, pattern=r"^\d{2}:\d{2}$")
 
     @field_validator("retry_on")
     @classmethod
@@ -91,6 +94,8 @@ class ScheduleUpdate(BaseModel):
     retry_on: Optional[list[str]] = None
     calendar_id: Optional[int] = None
     calendar_policy: Optional[str] = None
+    business_day_of_month: Optional[int] = Field(default=None, ge=1, le=23)
+    time_of_day: Optional[str] = Field(default=None, pattern=r"^\d{2}:\d{2}$")
 
     @field_validator("interval_value")
     @classmethod
