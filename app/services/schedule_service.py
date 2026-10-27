@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.core.exceptions import ConflictException, NotFoundException, ValidationException
 from app.domain.enums import CalendarType, ScheduleStatus, ScheduleType
 from app.models.automation import Automation
+from app.models.calendar import Calendar
 from app.repositories.schedule_repository import ScheduleRepository
 
 
@@ -158,8 +159,22 @@ class ScheduleService:
         return None
 
     @staticmethod
+    def _validate_calendar(db: Session, data: dict) -> None:
+        calendar_id = data.get("calendar_id")
+        if calendar_id in (None, "", 0):
+            if "calendar_id" in data:
+                data["calendar_id"] = None
+            return
+        calendar = db.get(Calendar, int(calendar_id))
+        if calendar is None:
+            raise NotFoundException("Calendário não encontrado")
+        if not calendar.active:
+            raise ValidationException("Esse calendário está inativo.")
+
+    @staticmethod
     def create(db: Session, data: dict):
         ScheduleService._map_retry(data)
+        ScheduleService._validate_calendar(db, data)
         automation = db.query(Automation).filter(Automation.id == data["automation_id"]).first()
         if not automation:
             raise NotFoundException("Automação não encontrada")
@@ -183,6 +198,7 @@ class ScheduleService:
     @staticmethod
     def update(db: Session, schedule_id: int, data: dict):
         ScheduleService._map_retry(data)
+        ScheduleService._validate_calendar(db, data)
         schedule = ScheduleService.get(db, schedule_id)
 
         new_automation_id = data.get("automation_id", schedule.automation_id)

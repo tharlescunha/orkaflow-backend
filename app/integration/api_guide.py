@@ -1359,6 +1359,53 @@ GUIDE.update({
 
 # ------------------------------------------------------------------- Schedules
 GUIDE.update({
+    "GET /api/v1/calendars/": {
+        "summary": "Lista os calendários (dias úteis, feriados, janelas proibidas)",
+        "description": (
+            "Calendários (menu Administração) dizem quando os robôs podem rodar. Um agendamento escolhe o "
+            "calendário (`calendar_id`) e a política num horário não permitido (`calendar_policy`: `defer` = "
+            "roda no próximo permitido no mesmo horário; `skip` = não roda e anota o motivo). Sem calendário, "
+            "o agendamento roda como sempre. Query opcional `active`.\n\n" + _BEARER
+        ),
+        "example_response": [{"id": 1, "name": "ALZ Grãos", "description": None, "active": True, "weekdays": [0, 1, 2, 3, 4], "weekdays_label": "seg a sex", "holidays": ["2026-11-02", "2026-11-15"], "blackouts": [{"label": "Backup", "start": "00:00", "end": "02:00", "weekdays": []}], "schedules_count": 3, "created_at": "2026-10-27T21:00:00Z", "updated_at": None}],
+    },
+    "POST /api/v1/calendars/": {
+        "summary": "Cria um calendário",
+        "description": (
+            "Campos: `name`, `description`, `active`, `weekdays` (0 = segunda ... 6 = domingo), `holidays` "
+            "(lista AAAA-MM-DD), `blackouts` (janelas proibidas: `label`, `start`/`end` HH:MM, `weekdays` vazio = "
+            "todos os dias).\n\n" + _BEARER
+        ),
+        "example_request": {"name": "ALZ Grãos", "active": True, "weekdays": [0, 1, 2, 3, 4], "holidays": ["2026-12-25"], "blackouts": [{"label": "Backup", "start": "00:00", "end": "02:00", "weekdays": []}]},
+        "example_response": {"id": 1, "name": "ALZ Grãos", "description": None, "active": True, "weekdays": [0, 1, 2, 3, 4], "weekdays_label": "seg a sex", "holidays": ["2026-12-25"], "blackouts": [{"label": "Backup", "start": "00:00", "end": "02:00", "weekdays": []}], "schedules_count": 0, "created_at": "2026-10-27T21:00:00Z", "updated_at": None},
+    },
+    "GET /api/v1/calendars/{calendar_id}": {
+        "summary": "Detalhe de um calendário",
+        "description": "Mesmo formato da lista. " + _BEARER,
+        "example_response": {"id": 1, "name": "ALZ Grãos", "description": None, "active": True, "weekdays": [0, 1, 2, 3, 4], "weekdays_label": "seg a sex", "holidays": [], "blackouts": [], "schedules_count": 0, "created_at": "2026-10-27T21:00:00Z", "updated_at": None},
+    },
+    "PUT /api/v1/calendars/{calendar_id}": {
+        "summary": "Altera um calendário",
+        "description": "Mesmos campos do POST (todos). " + _BEARER,
+        "example_request": {"name": "ALZ Grãos", "active": True, "weekdays": [0, 1, 2, 3, 4, 5], "holidays": [], "blackouts": []},
+        "example_response": {"id": 1, "name": "ALZ Grãos", "description": None, "active": True, "weekdays": [0, 1, 2, 3, 4, 5], "weekdays_label": "seg, ter, qua, qui, sex, sáb", "holidays": [], "blackouts": [], "schedules_count": 0, "created_at": "2026-10-27T21:00:00Z", "updated_at": None},
+    },
+    "DELETE /api/v1/calendars/{calendar_id}": {
+        "summary": "Remove um calendário",
+        "description": "409 se algum agendamento ainda usa o calendário. " + _BEARER,
+        "example_response": {"message": "Calendário removido."},
+    },
+    "POST /api/v1/calendars/{calendar_id}/holidays/import": {
+        "summary": "Importa os feriados nacionais do ano para o calendário",
+        "description": "Adiciona os feriados nacionais brasileiros do `year` (fixos + Carnaval, Sexta-feira Santa e Corpus Christi), mantendo os que já existem. " + _BEARER,
+        "example_request": {"year": 2027},
+        "example_response": {"id": 1, "name": "ALZ Grãos", "description": None, "active": True, "weekdays": [0, 1, 2, 3, 4], "weekdays_label": "seg a sex", "holidays": ["2027-01-01", "2027-02-08"], "blackouts": [], "schedules_count": 0, "created_at": "2026-10-27T21:00:00Z", "updated_at": None},
+    },
+    "GET /api/v1/calendars/{calendar_id}/check": {
+        "summary": "Confere se um horário é permitido pelo calendário",
+        "description": "Query `at` (ISO 8601) e `timezone` (padrão America/Sao_Paulo). Devolve `allowed`, o `reason` quando não é, e `next_allowed_at` (o que a política `defer` usaria). " + _BEARER,
+        "example_response": {"allowed": False, "reason": "feriado (25/12)", "next_allowed_at": "2026-12-28T06:00:00-03:00"},
+    },
     "GET /api/v1/schedules/": {
         "summary": "Lista agendamentos",
         "description": (
@@ -1383,6 +1430,8 @@ GUIDE.update({
             "- `skip_if_missed`: se o horário passou da tolerância, pula.\n\n"
             "Outros campos: `timezone` (IANA, ex.: `America/Sao_Paulo`; padrão `UTC`), `priority` 1–10, "
             "`runtime_parameters_json` (parâmetros de execução) e `use_default_runtime_parameters`.\n\n"
+            "Calendário: `calendar_id` (de GET /api/v1/calendars/) e `calendar_policy` (`defer` = adia para o próximo "
+            "horário permitido, `skip` = pula com motivo em `last_skipped_reason`).\n\n"
             "Retentativa automática: `retry_max` (0 a 5 tentativas extras quando a task deste agendamento falhar), "
             "`retry_delay_seconds` (espera entre tentativas) e `retry_on` (lista com `erro` e/ou `timeout`). "
             "Tentativas × espera precisa caber no intervalo do agendamento (senão 400). Cancelada, parada "

@@ -8,6 +8,13 @@ from pydantic import AliasChoices, BaseModel, Field, field_validator
 from app.domain.enums import SchedulePolicy, ScheduleStatus, ScheduleType, CalendarType
 
 
+def _clean_policy(value: str) -> str:
+    value = (value or "defer").strip().lower()
+    if value not in ("skip", "defer"):
+        raise ValueError("calendar_policy aceita só 'skip' ou 'defer'.")
+    return value
+
+
 def _clean_retry_on(value: list[str]) -> list[str]:
     cleaned = [str(v).strip().lower() for v in (value or [])]
     bad = [v for v in cleaned if v not in ("erro", "timeout")]
@@ -42,10 +49,19 @@ class ScheduleBase(BaseModel):
             raise ValueError("interval_value deve ser maior que zero")
         return value
 
+    # Calendário de dias úteis (opcional) e o que fazer num horário não permitido.
+    calendar_id: Optional[int] = None
+    calendar_policy: str = "defer"
+
     @field_validator("retry_on")
     @classmethod
     def validate_retry_on(cls, value: list[str]):
         return _clean_retry_on(value)
+
+    @field_validator("calendar_policy")
+    @classmethod
+    def validate_calendar_policy(cls, value: str):
+        return _clean_policy(value)
 
 
 class ScheduleCreate(ScheduleBase):
@@ -73,6 +89,8 @@ class ScheduleUpdate(BaseModel):
     retry_max: Optional[int] = Field(default=None, ge=0, le=5)
     retry_delay_seconds: Optional[int] = Field(default=None, ge=0, le=86400)
     retry_on: Optional[list[str]] = None
+    calendar_id: Optional[int] = None
+    calendar_policy: Optional[str] = None
 
     @field_validator("interval_value")
     @classmethod
@@ -85,6 +103,11 @@ class ScheduleUpdate(BaseModel):
     @classmethod
     def validate_retry_on(cls, value: Optional[list[str]]):
         return None if value is None else _clean_retry_on(value)
+
+    @field_validator("calendar_policy")
+    @classmethod
+    def validate_calendar_policy(cls, value: Optional[str]):
+        return None if value is None else _clean_policy(value)
 
 
 class ScheduleResponse(ScheduleBase):
@@ -99,6 +122,16 @@ class ScheduleResponse(ScheduleBase):
     @classmethod
     def _retry_on_default(cls, value):
         return value if isinstance(value, list) and value else ["erro", "timeout"]
+
+    # Nome do calendário para a tela (lido da relação).
+    calendar_name: Optional[str] = Field(default=None, validation_alias=AliasChoices("calendar_name", "calendar"))
+
+    @field_validator("calendar_name", mode="before")
+    @classmethod
+    def _calendar_name(cls, value):
+        if value is None or isinstance(value, str):
+            return value
+        return getattr(value, "name", None)
     status: Optional[ScheduleStatus] = None
     start_at: Optional[datetime] = None
     end_at: Optional[datetime] = None

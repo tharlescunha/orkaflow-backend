@@ -27,6 +27,7 @@ from app.models.task_telemetry import TaskTelemetry
 from app.models.user import User
 from app.models.worker_runtime_event import WorkerRuntimeEvent
 from app.models.runner_status_history import RunnerStatusHistory
+from app.models.calendar import Calendar
 from app.models.event_rule import EventRule, EventRun
 from app.models.notification_channel import NotificationChannel, NotificationLog
 from app.models.env_variable import EnvVariable
@@ -63,6 +64,7 @@ __all__ = [
     "TaskTelemetry",
     "WorkerRuntimeEvent",
     "RunnerStatusHistory",
+    "Calendar",
     "EventRule",
     "EventRun",
     "NotificationChannel",

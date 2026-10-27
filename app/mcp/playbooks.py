@@ -92,6 +92,10 @@ Agendamentos (menu Automação):
     interval_value > 0 (ex.: hour + 2 = a cada 2 horas).
   policy: create_always, ignore_if_running (padrão recomendado), enqueue_if_none_pending, run_if_missed, skip_if_missed.
   Parâmetros de execução: runtime_parameters_json; use_default_runtime_parameters mistura com os padrões da automação.
+  Calendário de dias úteis: calendar_id (GET /api/v1/calendars/) e calendar_policy ("defer" adia para o próximo
+  horário permitido no mesmo horário; "skip" pula e anota em last_skipped_reason). Calendários: menu
+  Administração; POST /api/v1/calendars/ com weekdays (0=segunda..6=domingo), holidays (AAAA-MM-DD) e blackouts
+  (janelas HH:MM); POST /api/v1/calendars/{id}/holidays/import com year importa os feriados nacionais.
   Retentativa automática (por agendamento, não por automação): retry_max (0-5), retry_delay_seconds, retry_on
   ["erro","timeout"]. Tentativas × espera precisa caber no intervalo do agendamento. Credencial inválida,
   cancelada e parada forçada nunca repetem.

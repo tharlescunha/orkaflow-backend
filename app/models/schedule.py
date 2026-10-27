@@ -68,5 +68,13 @@ class Schedule(Base, BaseModelMixin, TimestampMixin):
     retry_delay_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=300, server_default="300")
     retry_on_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
+    # Calendário (out/2026): dias úteis, feriados e janelas; política num horário não permitido:
+    # "defer" (roda no próximo permitido, mesmo horário) ou "skip" (não roda e anota o motivo).
+    calendar_id: Mapped[int | None] = mapped_column(
+        ForeignKey("calendars.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    calendar_policy: Mapped[str] = mapped_column(String(10), nullable=False, default="defer", server_default="defer")
+
     automation = relationship("Automation", back_populates="schedules")
+    calendar = relationship("Calendar", back_populates="schedules")
     tasks = relationship("Task", back_populates="schedule")

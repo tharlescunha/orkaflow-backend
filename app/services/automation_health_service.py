@@ -17,6 +17,7 @@ from app.domain.enums import (
 from app.models.automation import Automation
 from app.models.runner import Runner
 from app.models.schedule import Schedule
+from app.services import calendar_service
 from app.services.credential_health_service import CredentialHealthService
 from app.models.task import Task
 
@@ -258,6 +259,9 @@ class AutomationHealthService:
 
         elapsed_seconds = max(0, int((now_utc - last_reference_time.astimezone(UTC)).total_seconds()))
         is_overdue = elapsed_seconds > expected_interval_seconds
+        # Calendário de dias úteis: em feriado ou fim de semana do calendário não é atraso.
+        if is_overdue and not calendar_service.is_day_allowed_for_schedule(schedule, now_utc):
+            is_overdue = False
 
         return ExpectedWindowResult(
             expected_interval_seconds=expected_interval_seconds,

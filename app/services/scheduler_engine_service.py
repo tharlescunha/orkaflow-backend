@@ -21,6 +21,7 @@ from app.domain.enums import (
 from app.models.schedule import Schedule
 from app.models.task import Task
 from app.repositories.task_repository import TaskRepository
+from app.services import calendar_service
 from app.services.credential_health_service import CredentialHealthService
 from app.services.task_events import add_task_log
 
@@ -150,6 +151,33 @@ class SchedulerEngineService:
 
         last_created_time = None
         for execution_time_utc in execution_times:
+            # Calendário de dias úteis: pula (com motivo) ou adia para o próximo horário permitido.
+            decision, adjusted_time, calendar_reason = calendar_service.resolve_for_schedule(schedule, execution_time_utc)
+            if decision == "skip":
+                if calendar_reason and calendar_reason not in skip_reasons:
+                    skip_reasons.append(f"Calendário: {calendar_reason}; execução pulada.")
+                last_created_time = execution_time_utc  # ocorrência consumida
+                continue
+            if decision == "defer" and adjusted_time is not None:
+                existing = self._exists_task_for_execution(schedule.id, adjusted_time)
+                if existing:
+                    duplicate_tasks += 1
+                    last_created_time = execution_time_utc
+                    continue
+                outcome, reason = self._create_task(schedule, now_utc, adjusted_time)
+                if outcome == OUTCOME_CREATED:
+                    created_tasks += 1
+                    last_created_time = execution_time_utc
+                    if calendar_reason:
+                        skip_reasons.append(
+                            f"Calendário: {calendar_reason}; execução adiada para {adjusted_time.isoformat()}."
+                        )
+                else:
+                    if outcome == OUTCOME_RETRY:
+                        retry_tasks += 1
+                    if reason and reason not in skip_reasons:
+                        skip_reasons.append(reason)
+                continue
             outcome, reason = self._create_task(schedule, now_utc, execution_time_utc)
             if outcome == OUTCOME_CREATED:
                 created_tasks += 1
