@@ -73,6 +73,8 @@ class ScheduleResponse(ScheduleBase):
     last_error: Optional[str] = None
     last_skipped_reason: Optional[str] = None
     last_skipped_at: Optional[datetime] = None
+    paused_reason: Optional[str] = None
+    paused_credential_id: Optional[int] = None
     created_at: datetime
     updated_at: datetime
 

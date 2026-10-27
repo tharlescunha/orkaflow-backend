@@ -9,7 +9,9 @@ from app.models.automation_exclusive_group import (
     AutomationExclusiveGroupMember,
 )
 from app.models.automation_success_trigger import AutomationSuccessTrigger
+from app.models.automation import Automation
 from app.models.bot import Bot
+from app.services.credential_health_service import CredentialHealthService
 from app.models.repository import Repository
 from app.repositories.automation_exclusive_group_repository import (
     AutomationExclusiveGroupRepository,
@@ -25,6 +27,8 @@ class _Related:
     groups_by_automation: dict[int, list] = field(default_factory=dict)
     members_by_group: dict[int, list[int]] = field(default_factory=dict)
     triggers_by_automation: dict[int, list] = field(default_factory=dict)
+    # Credenciais inválidas por automação (saúde de credenciais, out/2026).
+    credential_alerts_by_automation: dict[int, list[dict]] = field(default_factory=dict)
 
 
 class AutomationService:
@@ -65,6 +69,9 @@ class AutomationService:
         related = _Related()
         if not automation_ids:
             return related
+
+        automations = db.execute(select(Automation).where(Automation.id.in_(automation_ids))).scalars().all()
+        related.credential_alerts_by_automation = CredentialHealthService(db).alerts_by_automation(automations)
 
         membership_rows = db.execute(
             select(AutomationExclusiveGroupMember.automation_id, AutomationExclusiveGroup)
@@ -138,6 +145,7 @@ class AutomationService:
                 AutomationService._serialize_success_trigger(trigger)
                 for trigger in success_triggers
             ],
+            "credential_alerts": related.credential_alerts_by_automation.get(automation.id, []),
             "created_at": automation.created_at,
             "updated_at": automation.updated_at,
         }

@@ -134,6 +134,17 @@ class LockScopeType(str, Enum):
     BUSINESS_RESOURCE = "business_resource"
 
 
+class CredentialStatus(str, Enum):
+    """Saúde da credencial: o orquestrador marca quando um robô avisa que a senha não serve mais."""
+
+    VALIDA = "valida"
+    NAO_VERIFICADA = "nao_verificada"
+    INVALIDA = "invalida"
+    SENHA_INCORRETA = "senha_incorreta"
+    SENHA_EXPIRADA = "senha_expirada"
+    USUARIO_BLOQUEADO = "usuario_bloqueado"
+
+
 class CredentialValueType(str, Enum):
     STRING = "string"
     PASSWORD = "password"

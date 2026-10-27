@@ -191,6 +191,29 @@ class WorkerCredentialResolveRequest(OrkaBaseSchema):
     uuid: str
     token: str
     keys: list[str] | None = None
+    # Task que está usando a credencial: o backend confere que ela é do mesmo repositório da
+    # automação. Opcional por uma versão (workers antigos não mandam).
+    task_id: int | None = None
+
+
+class WorkerCredentialAlertRequest(OrkaBaseSchema):
+    """Robô avisou (linha ORKAFLOW_ALERTA_CREDENCIAL ou saída 3) que a credencial não serve mais."""
+
+    uuid: str
+    token: str
+    credential_id: int | None = None
+    chave: str | None = Field(default=None, max_length=120)
+    # senha_incorreta | senha_expirada | usuario_bloqueado | invalida
+    motivo: str = Field(default="invalida", max_length=40)
+    mensagem: str | None = Field(default=None, max_length=1000)
+    sistema: str | None = Field(default=None, max_length=80)
+
+
+class WorkerCredentialAlertResponse(OrkaBaseSchema):
+    task_id: int
+    credential_id: int | None = None
+    status: str
+    schedules_paused: int = 0
 
 
 class WorkerCredentialResolveResponse(OrkaBaseSchema):

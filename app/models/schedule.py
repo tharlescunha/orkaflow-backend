@@ -57,5 +57,10 @@ class Schedule(Base, BaseModelMixin, TimestampMixin):
     last_skipped_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_skipped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # Por que está pausado (ex.: credencial_invalida) e por qual credencial: assim a reativação
+    # automática só mexe nos agendamentos que ela mesma pausou.
+    paused_reason: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    paused_credential_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     automation = relationship("Automation", back_populates="schedules")
     tasks = relationship("Task", back_populates="schedule")

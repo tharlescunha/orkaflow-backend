@@ -34,6 +34,16 @@ class AutomationHealthScheduleResponse(BaseModel):
     rule_label: str | None = None
 
 
+class AutomationHealthCredentialAlert(BaseModel):
+    credential_id: int
+    credential_label: str
+    status: str
+    status_label: str
+    status_reason: str | None = None
+    status_updated_at: datetime | None = None
+    status_task_id: int | None = None
+
+
 class AutomationHealthItemResponse(BaseModel):
     automation_id: int
     automation_name: str
@@ -65,6 +75,7 @@ class AutomationHealthItemResponse(BaseModel):
 
     schedule: AutomationHealthScheduleResponse | None = None
     last_task: AutomationHealthTaskResponse | None = None
+    credential_alerts: list[AutomationHealthCredentialAlert] = []
 
 
 class AutomationHealthListResponse(BaseModel):

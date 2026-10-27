@@ -13,6 +13,8 @@ from app.core.exceptions import (
     UnauthorizedException,
     ValidationException,
 )
+from app.services.credential_health_service import CredentialHealthService
+from app.services.task_events import add_task_log
 from app.core.security import (
     decrypt_credential_value,
     generate_runner_token,
@@ -948,6 +950,7 @@ class WorkerService:
         if new_status == TaskStatus.FINISHED:
             # Gatilhos de sucesso (junho/2026): só na primeira transição para FINISHED
             # (estados finais já retornaram antes, em _ignore_transition).
+            self._mark_credentials_valid(task)
             self.automation_trigger_service.create_success_followups(task)
 
         self._refresh_runner_status(runner, reason="task_finalizada" if is_final else "task_progress")
@@ -998,6 +1001,7 @@ class WorkerService:
         self._refresh_runner_status(runner, reason="task_finalizada")
 
         if payload.status == TaskStatus.FINISHED:
+            self._mark_credentials_valid(task)
             self.automation_trigger_service.create_success_followups(task)
 
         self.db.commit()
@@ -1078,7 +1082,7 @@ class WorkerService:
         )
 
     def resolve_credential_for_runner(self, credential_id: int, payload):
-        self._authenticate_runner(payload.uuid, payload.token)
+        runner = self._authenticate_runner(payload.uuid, payload.token)
 
         credential = self.credential_repository.get_by_id(credential_id)
         if not credential:
@@ -1086,6 +1090,24 @@ class WorkerService:
 
         if not credential.active:
             raise ValidationException("Credencial está inativa.")
+
+        # A credencial só sai para a task que a usa, e só se for do mesmo repositório da automação.
+        # Antes qualquer máquina autenticada resolvia qualquer credencial pelo id.
+        task_id = getattr(payload, "task_id", None)
+        if task_id is not None:
+            task = self.task_repository.get_by_id(task_id)
+            if not task or task.runner_id != runner.id:
+                raise ForbiddenException("A task informada não pertence a esta máquina.")
+            automation = task.automation or self.task_repository.get_automation_by_id(task.automation_id)
+            if automation is not None and automation.repository_id != credential.repository_id:
+                raise ForbiddenException(
+                    f"Credencial '{credential.label}' é de outro repositório e não pode ser usada por esta automação."
+                )
+        else:
+            logger.warning(
+                "Worker do runner %s resolveu a credencial %s sem informar a task (worker antigo).",
+                runner.id, credential.id,
+            )
 
         requested_keys = None
         if payload.keys:
@@ -1104,6 +1126,59 @@ class WorkerService:
         return {
             "dados_acesso": resolved_items,
         }
+
+    def report_credential_alert(self, task_id: int, payload):
+        """Robô avisou (via worker) que a credencial não serve mais: marca, pausa agendamentos, bloqueia."""
+        runner = self._authenticate_runner(payload.uuid, payload.token)
+        task = self.task_repository.get_by_id(task_id)
+        self._validate_task_runner_ownership(task, runner)
+
+        health = CredentialHealthService(self.db)
+        credential = None
+        if payload.credential_id is not None:
+            credential = self.credential_repository.get_by_id(payload.credential_id)
+        if credential is None:
+            # Worker não soube dizer qual: procura no parameters_json da própria task.
+            ids = health.credential_ids_for_task(task)
+            if len(ids) == 1:
+                credential = self.credential_repository.get_by_id(next(iter(ids)))
+
+        if credential is None:
+            add_task_log(
+                self.db,
+                task.id,
+                "Robô avisou credencial inválida, mas a task não usa nenhuma credencial cadastrada "
+                f"({payload.sistema or 'sistema não informado'}: {payload.mensagem or payload.motivo}).",
+                level=TaskLogLevel.WARNING,
+                source=TaskLogSource.BACKEND,
+                event_code="credential_alert",
+                runner_id=runner.id,
+            )
+            self.db.commit()
+            return {"task_id": task.id, "credential_id": None, "status": "nao_encontrada", "schedules_paused": 0}
+
+        paused = health.mark_invalid(
+            credential,
+            motivo=payload.motivo,
+            mensagem=payload.mensagem,
+            task=task,
+            chave=payload.chave,
+            sistema=payload.sistema,
+        )
+        self.db.commit()
+        return {
+            "task_id": task.id,
+            "credential_id": credential.id,
+            "status": credential.status,
+            "schedules_paused": paused,
+        }
+
+    def _mark_credentials_valid(self, task) -> None:
+        """Task com sucesso: as credenciais usadas viram 'válida'. Nunca derruba o fechamento da task."""
+        try:
+            CredentialHealthService(self.db).mark_valid_from_task(task)
+        except Exception:  # noqa: BLE001
+            logger.exception("Falha ao marcar credenciais como válidas para a task %s", task.id)
 
     def create_task_telemetry(self, task_id: int, payload):
         runner = self._authenticate_runner(payload.uuid, payload.token)

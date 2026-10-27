@@ -17,6 +17,7 @@ from app.domain.enums import (
 from app.models.automation import Automation
 from app.models.runner import Runner
 from app.models.schedule import Schedule
+from app.services.credential_health_service import CredentialHealthService
 from app.models.task import Task
 
 
@@ -86,6 +87,7 @@ class AutomationHealthService:
         task_map = {task.automation_id: task for task in last_tasks if task.automation_id is not None}
 
         now_utc = datetime.now(UTC)
+        credential_alerts = CredentialHealthService(db).alerts_by_automation(automation_items)
 
         items = []
         for automation in automation_items:
@@ -143,6 +145,7 @@ class AutomationHealthService:
                         rule_label=expected_window.rule_label,
                     ),
                     "last_task": AutomationHealthService._serialize_task(task),
+                    "credential_alerts": credential_alerts.get(automation.id, []),
                 }
             )
 

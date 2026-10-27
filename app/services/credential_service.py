@@ -7,6 +7,7 @@ from app.core.security import (
     encrypt_credential_value,
 )
 from app.repositories.credential_repository import CredentialRepository
+from app.services.credential_health_service import CredentialHealthService
 from app.repositories.repository_repository import RepositoryRepository
 from app.schemas.credential import (
     CredentialCreate,
@@ -102,7 +103,9 @@ class CredentialService:
             "masked_preview": masked_preview,
         }
 
-        return self.repo.create_item(**payload)
+        item = self.repo.create_item(**payload)
+        self._back_to_unverified(credential_id)
+        return item
 
     def update_item(self, credential_id: int, item_id: int, data: CredentialItemUpdate):
         item = self.get_item(credential_id, item_id)
@@ -127,7 +130,17 @@ class CredentialService:
                 payload["encrypted_value"] = encrypt_credential_value(raw_value)
                 payload["masked_preview"] = build_masked_preview(raw_value)
 
-        return self.repo.update_item(item, **payload)
+        updated = self.repo.update_item(item, **payload)
+        if "encrypted_value" in payload:
+            self._back_to_unverified(credential_id)
+        return updated
+
+    def _back_to_unverified(self, credential_id: int) -> None:
+        """Trocou a senha: a credencial volta a 'não verificada' e os agendamentos pausados por ela voltam."""
+        credential = self.repo.get_by_id(credential_id)
+        if credential is None:
+            return
+        CredentialHealthService(self.repo.db).mark_unverified(credential)
 
     def delete_item(self, credential_id: int, item_id: int):
         item = self.get_item(credential_id, item_id)

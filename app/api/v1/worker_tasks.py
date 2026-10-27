@@ -11,6 +11,8 @@ from app.schemas.worker import (
     WorkerTaskActiveListResponse,
     WorkerTaskClaimRequest,
     WorkerTaskClaimResponse,
+    WorkerCredentialAlertRequest,
+    WorkerCredentialAlertResponse,
     WorkerTaskFinishRequest,
     WorkerTaskNextRequest,
     WorkerTaskNextResponse,
@@ -91,3 +93,10 @@ def finish_task(
 ):
     service = WorkerService(db)
     return service.finish_task(task_id, payload)
+
+
+@router.post("/{task_id}/credential-alert", response_model=WorkerCredentialAlertResponse)
+def report_credential_alert(task_id: int, payload: WorkerCredentialAlertRequest, db: Session = Depends(get_db)):
+    """Robô avisou que a credencial não serve mais (senha expirada, incorreta ou usuário bloqueado)."""
+    service = WorkerService(db)
+    return service.report_credential_alert(task_id, payload)

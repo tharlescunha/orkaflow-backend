@@ -2473,6 +2473,27 @@ GUIDE.update({
         },
         "example_response": {"message": "Erro registrado com sucesso.", "task_id": 42730},
     },
+    "POST /api/v1/worker/tasks/{task_id}/credential-alert": {
+        "summary": "Robô avisou que a credencial não serve mais (senha expirada, incorreta ou usuário bloqueado)",
+        "description": (
+            _WORKER + "O worker chama quando o robô imprime a linha `ORKAFLOW_ALERTA_CREDENCIAL {json}` no stdout "
+            "ou termina com código de saída 3. O backend marca a credencial com o `motivo` "
+            "(`senha_incorreta` | `senha_expirada` | `usuario_bloqueado` | `invalida`), pausa os agendamentos "
+            "das automações que a usam (motivo `credencial_invalida`) e passa a recusar tasks novas dessas "
+            "automações com 409, até alguém trocar a senha em Credenciais. "
+            "`credential_id` pode vir vazio: o backend procura no `dados_acesso` da task." + _WORKER_AUTH_ERRORS
+        ),
+        "example_request": {
+            "uuid": "6f1c2a9e-0000-4000-8000-000000000005",
+            "token": "token-do-runner-exemplo",
+            "credential_id": 16,
+            "chave": "sap_senha",
+            "motivo": "senha_expirada",
+            "mensagem": "SAP: senha do usuário RPA_SVC expirou",
+            "sistema": "SAP",
+        },
+        "example_response": {"task_id": 42724, "credential_id": 16, "status": "senha_expirada", "schedules_paused": 2},
+    },
     "POST /api/v1/worker/sync": {
         "summary": "Sincroniza configuração e bots da máquina",
         "description": (

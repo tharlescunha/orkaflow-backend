@@ -48,7 +48,8 @@ class AutomationListQueryTests(unittest.TestCase):
         items = AutomationService.list(self.db)
         self.assertEqual(len(items), 12)
         # 1 automações + 1 grupos + 1 membros + 1 gatilhos + 1 alvos dos gatilhos
-        self.assertLessEqual(self.queries, 5, f"{self.queries} queries para 12 automações")
+        # + 1 automações (ids) e até 1 credenciais, para os alertas de credencial inválida
+        self.assertLessEqual(self.queries, 7, f"{self.queries} queries para 12 automações")
 
     def test_list_matches_single_item_serialization(self):
         listed = {item["id"]: item for item in AutomationService.list(self.db)}

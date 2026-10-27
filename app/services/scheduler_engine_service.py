@@ -21,6 +21,7 @@ from app.domain.enums import (
 from app.models.schedule import Schedule
 from app.models.task import Task
 from app.repositories.task_repository import TaskRepository
+from app.services.credential_health_service import CredentialHealthService
 from app.services.task_events import add_task_log
 
 logger = logging.getLogger(__name__)
@@ -389,6 +390,10 @@ class SchedulerEngineService:
         bot = automation.bot
         if not bot or not bot.active:
             return OUTCOME_SKIPPED, "Bot inativo ou inexistente; execução pulada."
+
+        blocked = CredentialHealthService(self.db).blocked_reason(automation)
+        if blocked:
+            return OUTCOME_SKIPPED, f"Execução pulada: {blocked}"
 
         bot_version = self.task_repo.get_latest_bot_version_for_bot(automation.bot_id)
         if not bot_version:

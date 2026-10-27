@@ -108,6 +108,11 @@ Variáveis de ambiente dos robôs (menu Automação > Variáveis; exige administ
 """,
     "credenciais": """\
 Credenciais (menu Segurança): cofre de usuários/senhas/tokens que os robôs usam.
+Saúde: cada credencial tem `status` (valida | nao_verificada | invalida | senha_incorreta | senha_expirada |
+usuario_bloqueado), `status_reason` e `status_task_id`. Quando um robô avisa que a senha não serve, a credencial
+fica inválida, os agendamentos das automações que a usam são pausados (paused_reason=credencial_invalida) e
+tasks novas são recusadas com 409. Trocar um item (PUT /credentials/{id}/items/{item_id}) volta para
+nao_verificada e reativa esses agendamentos; a próxima task com sucesso marca valida.
 - Listar: GET /api/v1/credentials/. Detalhe com itens mascarados: GET /api/v1/credentials/{id}.
 - Criar: POST /api/v1/credentials/ com repository_id e label (único) — é só o agrupador.
 - Itens (os valores): POST /api/v1/credentials/{id}/items com key (ex.: usuario, senha), value_type

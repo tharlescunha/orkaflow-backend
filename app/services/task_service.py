@@ -1,13 +1,15 @@
+import logging
 import json
 from datetime import UTC, datetime
 
 from app.core.exceptions import NotFoundException, ValidationException
 from app.models.runner import Runner
+from app.services.credential_health_service import CredentialHealthService
 from app.services.task_rules import runner_in_maintenance
 from app.domain.enums import ExecutionMode, RunnerStatus, TaskLogLevel, TaskLogSource, TaskStatus
 from app.repositories.runner_repository import RunnerRepository
 from app.repositories.task_repository import TaskRepository
-from app.schemas.task import TaskCreate, TaskStatusUpdate, TaskUpdate
+from app.schemas.task import TaskParameterCreate, TaskCreate, TaskStatusUpdate, TaskUpdate
 from app.services.automation_trigger_service import AutomationTriggerService
 from app.services.capacity_service import CapacityService
 from app.services.lock_service import LockService
@@ -50,6 +52,9 @@ def _calculate_execution_duration_seconds(task) -> int | None:
         return int((now - started_at).total_seconds())
 
     return None
+
+
+logger = logging.getLogger(__name__)
 
 
 class TaskService:
@@ -370,6 +375,9 @@ class TaskService:
         if not bot.active:
             raise ValidationException("Não é permitido criar task para bot inativo.")
 
+        # Credencial inválida (senha expirada etc.): recusa com 409 para não bloquear o usuário no destino.
+        CredentialHealthService(self.db).ensure_automation_credentials_usable(automation)
+
         bot_version_id = payload.bot_version_id
         if bot_version_id is None:
             latest_bot_version = self.repository.get_latest_bot_version_for_bot(automation.bot_id)
@@ -397,6 +405,13 @@ class TaskService:
         automation_parameters = self.repository.get_automation_parameters(payload.automation_id)
         provided_parameters = {p.parameter_name: p for p in payload.parameters}
         self._validate_json_parameter_if_present(provided_parameters, "parameters_json")
+        self._validate_json_parameter_if_present(provided_parameters, "runtime_parameters_json")
+        # O que o chamador não mandou vem do padrão da automação (o agendador e o MCP já faziam isso;
+        # a API e a tela não). Assim o dados_acesso fica cadastrado na automação, não em quem chama.
+        self._merge_automation_defaults(provided_parameters, automation, "parameters_json", "default_parameters_json")
+        self._merge_automation_defaults(
+            provided_parameters, automation, "runtime_parameters_json", "default_runtime_parameters_json"
+        )
         self._validate_json_parameter_if_present(provided_parameters, "runtime_parameters_json")
         runtime_parameters = self._extract_runtime_parameters(provided_parameters)
 
@@ -476,7 +491,7 @@ class TaskService:
                 )
 
         extra_parameters = [
-            p for p in payload.parameters
+            p for p in provided_parameters.values()
             if p.parameter_name not in automation_param_names
         ]
         for extra in extra_parameters:
@@ -494,6 +509,32 @@ class TaskService:
 
         self.db.commit()
         return self.get_task(task.id)
+
+    @staticmethod
+    def _merge_automation_defaults(provided: dict, automation, param_name: str, default_attr: str) -> None:
+        defaults = getattr(automation, default_attr, None)
+        if not isinstance(defaults, dict) or not defaults:
+            return
+        incoming = provided.get(param_name)
+        if incoming is None:
+            provided[param_name] = TaskParameterCreate(
+                parameter_name=param_name,
+                parameter_value=json.dumps(defaults, ensure_ascii=False),
+                is_secret=False,
+                resolved_from_credential_item_id=None,
+            )
+            return
+        try:
+            current = json.loads(incoming.parameter_value or "{}")
+        except Exception:  # noqa: BLE001
+            return
+        if not isinstance(current, dict):
+            return
+        merged = {**defaults, **current}
+        if merged != current:
+            provided[param_name] = incoming.model_copy(
+                update={"parameter_value": json.dumps(merged, ensure_ascii=False)}
+            )
 
     def _extract_runtime_parameters(self, provided_parameters: dict) -> dict:
         runtime_param = provided_parameters.get("runtime_parameters_json")
@@ -668,6 +709,10 @@ class TaskService:
 
         task = self.repository.update(task, data)
         if previous_status not in FINAL_STATUSES and payload.status == TaskStatus.FINISHED:
+            try:
+                CredentialHealthService(self.db).mark_valid_from_task(task)
+            except Exception:  # noqa: BLE001
+                logger.exception("Falha ao marcar credenciais como válidas para a task %s", task.id)
             self.automation_trigger_service.create_success_followups(task)
         if task.status in FINAL_STATUSES:
             self._release_after_final(task)

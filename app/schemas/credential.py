@@ -24,6 +24,11 @@ class CredentialUpdate(OrkaBaseSchema):
 
 class CredentialRead(CredentialBase):
     id: int
+    # Saúde: valida | nao_verificada | invalida | senha_incorreta | senha_expirada | usuario_bloqueado
+    status: str = "nao_verificada"
+    status_reason: str | None = None
+    status_updated_at: datetime | None = None
+    status_task_id: int | None = None
     created_at: datetime
     updated_at: datetime | None = None
 

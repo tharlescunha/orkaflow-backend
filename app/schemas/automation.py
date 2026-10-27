@@ -76,8 +76,21 @@ class AutomationUpdate(BaseModel):
     default_runtime_parameters_json: Optional[dict] = None
 
 
+class CredentialAlertResponse(BaseModel):
+    """Credencial inválida usada pela automação (tela mostra a faixa de aviso)."""
+
+    credential_id: int
+    credential_label: str
+    status: str
+    status_label: str
+    status_reason: str | None = None
+    status_updated_at: datetime | None = None
+    status_task_id: int | None = None
+
+
 class AutomationResponse(AutomationBase):
     id: int
+    credential_alerts: list[CredentialAlertResponse] = Field(default_factory=list)
     bot_name: str | None = None
     repository_name: str | None = None
     exclusive_groups: list[AutomationExclusiveGroupResponse] = Field(default_factory=list)
