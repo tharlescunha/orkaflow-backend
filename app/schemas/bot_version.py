@@ -77,6 +77,14 @@ class BotVersionResponse(OrkaBaseSchema):
     in_use: bool = False
     pinned: bool = False
 
+    @field_validator("artifact_path", mode="before")
+    @classmethod
+    def _hide_token(cls, value):
+        # Versões antigas guardam o link do Git (com token) como artifact_path: o painel não vê o token.
+        from app.services.git_repo_service import mask_url_credentials
+
+        return mask_url_credentials(value) if isinstance(value, str) else value
+
 
 class GitCommitRead(OrkaBaseSchema):
     hash: str

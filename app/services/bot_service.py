@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 
-from app.core.exceptions import ConflictException, NotFoundException
+from app.core.exceptions import ConflictException, NotFoundException, ValidationException
 from app.models.repository import Repository
 from app.repositories.bot_repository import BotRepository
 
@@ -9,7 +9,15 @@ from app.models.bot_version import BotVersion
 from app.models.user import User
 
 from app.repositories.bot_version_repository import BotVersionRepository
+from app.services.git_repo_service import mask_url_credentials
 
+
+
+def _reject_masked_url(data: dict) -> None:
+    """O painel mostra o link com o token escondido (***). Se isso voltar para salvar, perderia o token."""
+    url = data.get("source_url")
+    if isinstance(url, str) and "***@" in url:
+        raise ValidationException("O link veio com o token escondido (***). Cole o link completo, com o token.")
 
 
 class BotService:
@@ -43,7 +51,8 @@ class BotService:
             "repository_name": bot.repository.name if bot.repository else None,
             "source_type": source_type,
             "execution_mode": execution_mode,
-            "source_url": bot.source_url,
+            # O painel nunca vê o token do link; o worker recebe o link completo por outra rota.
+            "source_url": mask_url_credentials(bot.source_url),
             "entrypoint": bot.entrypoint,
             "requirements_file": bot.requirements_file,
             "timeout_default": bot.timeout_default,
@@ -113,6 +122,7 @@ class BotService:
         return self._serialize_bot(bot, latest_versions)
 
     def create(self, data: dict):
+        _reject_masked_url(data)
         initial_version = data.pop("initial_version")
         created_by = data.pop("created_by", None)
 
@@ -171,6 +181,7 @@ class BotService:
             raise
 
     def update(self, bot_id: int, data: dict):
+        _reject_masked_url(data)
         bot = self.repo.get_by_id(self.db, bot_id)
         if not bot:
             raise NotFoundException("Bot não encontrado.")

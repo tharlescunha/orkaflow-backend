@@ -80,3 +80,38 @@ class InspectSourceTests(unittest.TestCase):
     def test_empty_url(self):
         with self.assertRaises(ValidationException):
             inspect_source("   ")
+
+
+class HiddenTokenTests(unittest.TestCase):
+    """O painel nunca vê o token do link; salvar o link mascarado é recusado."""
+
+    def setUp(self):
+        from tests.test_concurrency_watchdog import Fixture
+        self.f = Fixture()
+        self.db = self.f.db
+        self.auto, _ = self.f.automation(runners=[self.f.runner("r1")])
+
+    def test_bot_read_masks_token_and_worker_keeps_it(self):
+        from app.models.bot import Bot
+        from app.services.bot_service import BotService
+        bot = self.db.get(Bot, self.auto.bot_id)
+        bot.source_url = "https://alz:tokenSecreto@dev.azure.com/org/proj/_git/RPA_X"
+        self.db.commit()
+        read = BotService(self.db).get(bot.id)
+        self.assertEqual(read["source_url"], "https://***@dev.azure.com/org/proj/_git/RPA_X")
+        self.assertIn("tokenSecreto", self.db.get(Bot, bot.id).source_url)
+
+    def test_update_with_masked_url_is_refused(self):
+        from app.services.bot_service import BotService
+        with self.assertRaises(ValidationException):
+            BotService(self.db).update(self.auto.bot_id, {"source_url": "https://***@dev.azure.com/org/_git/RPA_X"})
+
+    def test_version_response_masks_artifact_path(self):
+        from app.schemas.bot_version import BotVersionResponse
+        from datetime import datetime, timezone
+        resp = BotVersionResponse(
+            id=1, bot_id=1, version="1.0.0", storage_type="local", is_active=True,
+            artifact_path="https://alz:tokenSecreto@dev.azure.com/org/_git/RPA_X",
+            created_at=datetime.now(timezone.utc),
+        )
+        self.assertEqual(resp.artifact_path, "https://***@dev.azure.com/org/_git/RPA_X")
