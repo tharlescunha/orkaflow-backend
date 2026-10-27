@@ -70,6 +70,10 @@ class Task(Base, BaseModelMixin, TimestampMixin):
     runner_claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Por que a task está esperando na fila (escrito pelo dispatcher/next-task; limpo ao vincular/assumir).
     waiting_reason: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    # Etapa atual informada pelo robô (maestro.step): "3 de 7: Enviando ao SAP".
+    progress_current: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    progress_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    progress_text: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
     automation = relationship("Automation", back_populates="tasks")
     bot_version = relationship("BotVersion", back_populates="tasks")

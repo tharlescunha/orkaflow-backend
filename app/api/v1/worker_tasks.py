@@ -15,6 +15,8 @@ from app.schemas.worker import (
     WorkerCredentialAlertResponse,
     WorkerTaskFinishRequest,
     WorkerTaskNextRequest,
+    WorkerTaskProgressRequest,
+    WorkerTaskProgressResponse,
     WorkerTaskNextResponse,
     WorkerTaskReleaseStartupLocksRequest,
     WorkerTaskReleaseStartupLocksResponse,
@@ -93,6 +95,13 @@ def finish_task(
 ):
     service = WorkerService(db)
     return service.finish_task(task_id, payload)
+
+
+@router.post("/{task_id}/progress", response_model=WorkerTaskProgressResponse)
+def update_task_progress(task_id: int, payload: WorkerTaskProgressRequest, db: Session = Depends(get_db)):
+    """Etapa atual do robô (maestro.step): aparece na lista e no detalhe da task."""
+    service = WorkerService(db)
+    return service.update_task_progress(task_id, payload)
 
 
 @router.post("/{task_id}/credential-alert", response_model=WorkerCredentialAlertResponse)

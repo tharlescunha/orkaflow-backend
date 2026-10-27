@@ -559,6 +559,8 @@ class WorkerService:
                     # checkout do commit da versão (comportamento atual sem auto_update).
                     "auto_update": bool(getattr(bot, "auto_update", False))
                     and getattr(bot, "pinned_version_id", None) is None,
+                    # Robô antigo recebe o caminho do JSON por argumento; robô com maestro não precisa.
+                    "reads_task_file_arg": bool(getattr(bot, "reads_task_file_arg", True)),
                 }
             )
             added_bot_ids.add(bot.id)
@@ -1210,6 +1212,27 @@ class WorkerService:
             CredentialHealthService(self.db).mark_valid_from_task(task)
         except Exception:  # noqa: BLE001
             logger.exception("Falha ao marcar credenciais como válidas para a task %s", task.id)
+
+    def update_task_progress(self, task_id: int, payload):
+        """Etapa atual do robô (maestro.step). Só enquanto a task está em execução."""
+        runner = self._authenticate_runner(payload.uuid, payload.token)
+        task = self.task_repository.get_by_id(task_id)
+        self._validate_task_runner_ownership(task, runner)
+
+        if task.status in EXECUTING_STATUSES:
+            task.progress_current = int(payload.current)
+            task.progress_total = None if payload.total is None else int(payload.total)
+            task.progress_text = (payload.text or None)
+            task.last_update_at = datetime.now(UTC)
+            self.db.add(task)
+            self.db.commit()
+
+        return {
+            "task_id": task.id,
+            "progress_current": task.progress_current,
+            "progress_total": task.progress_total,
+            "progress_text": task.progress_text,
+        }
 
     def create_task_telemetry(self, task_id: int, payload):
         runner = self._authenticate_runner(payload.uuid, payload.token)

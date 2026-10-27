@@ -167,6 +167,23 @@ class WorkerTaskLogResponse(OrkaBaseSchema):
     task_id: int
 
 
+class WorkerTaskProgressRequest(OrkaBaseSchema):
+    """Etapa atual informada pelo robô pelo maestro.step (o worker repassa quando muda)."""
+
+    uuid: str
+    token: str
+    current: int = Field(..., ge=0)
+    total: int | None = Field(default=None, ge=0)
+    text: str | None = Field(default=None, max_length=200)
+
+
+class WorkerTaskProgressResponse(OrkaBaseSchema):
+    task_id: int
+    progress_current: int | None = None
+    progress_total: int | None = None
+    progress_text: str | None = None
+
+
 class WorkerTaskErrorCreate(OrkaBaseSchema):
     uuid: str
     token: str

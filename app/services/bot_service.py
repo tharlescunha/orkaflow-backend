@@ -58,6 +58,7 @@ class BotService:
             "timeout_default": bot.timeout_default,
             "active": bot.active,
             "auto_update": bool(getattr(bot, "auto_update", False)),
+            "reads_task_file_arg": bool(getattr(bot, "reads_task_file_arg", True)),
             "current_version": effective_current_version,
             "release_version": bot.release_version,
             "created_at": bot.created_at,
@@ -103,6 +104,7 @@ class BotService:
                 "release_version": bot.release_version,
                 "active": bot.active,
                 "auto_update": bool(getattr(bot, "auto_update", False)),
+            "reads_task_file_arg": bool(getattr(bot, "reads_task_file_arg", True)),
                 "created_at": bot.created_at,
             }
             for bot in bots

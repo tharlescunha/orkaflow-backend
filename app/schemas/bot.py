@@ -19,6 +19,9 @@ class BotBase(OrkaBaseSchema):
     timeout_default: int = Field(..., ge=1)
     active: bool = True
     auto_update: bool = False
+    # Robô antigo recebe o caminho do JSON da task por argumento. Padrão True na API (compatível);
+    # a tela de novo bot desmarca, porque robô com maestro não precisa.
+    reads_task_file_arg: bool = True
 
 
 class BotCreate(BotBase):
@@ -39,6 +42,7 @@ class BotUpdate(OrkaBaseSchema):
     release_version: str | None = Field(default=None, min_length=1, max_length=50)
     active: bool | None = None
     auto_update: bool | None = None
+    reads_task_file_arg: bool | None = None
 
 
 class BotRead(BotBase):
@@ -62,6 +66,7 @@ class BotListItem(OrkaBaseSchema):
     release_version: str | None = None
     active: bool
     auto_update: bool = False
+    reads_task_file_arg: bool = True
     created_at: datetime
 
 

@@ -380,9 +380,18 @@ class RunnerRepository:
 
         total = 0
         for started_at, finished_at, task_status in self.db.execute(stmt).all():
+            # SQLite (ambiente local) devolve datas sem fuso: normaliza antes de subtrair.
+            started_at = _as_aware(started_at)
+            finished_at = _as_aware(finished_at)
             if started_at and finished_at:
                 total += int((finished_at - started_at).total_seconds())
             elif started_at and task_status == TaskStatus.RUNNING:
                 total += int((now - started_at).total_seconds())
 
         return total
+
+
+def _as_aware(value):
+    if value is None or value.tzinfo is not None:
+        return value
+    return value.replace(tzinfo=UTC)

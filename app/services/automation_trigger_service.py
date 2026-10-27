@@ -3,9 +3,13 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
+from types import SimpleNamespace
+
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.domain.enums import ExecutionMode, TaskLogLevel, TaskLogSource, TaskStatus
+from app.models.automation import Automation
 from app.models.task import Task
 from app.repositories.automation_success_trigger_repository import (
     AutomationSuccessTriggerRepository,
@@ -50,30 +54,37 @@ class AutomationTriggerService:
                 active=True,
             )
         )
-        if not triggers:
-            return []
 
         workflow_requests = self._parse_result_workflow(parent_task)
+        if not triggers and workflow_requests is None:
+            return []
+
         requests_by_target: dict[int, dict[str, Any]] | None = None
 
         if workflow_requests is not None:
-            requests_by_target = {
-                item["automation_id"]: item for item in workflow_requests
-            }
-            allowed_target_ids = {trigger.target_automation_id for trigger in triggers}
-            ignored_ids = sorted(set(requests_by_target) - allowed_target_ids)
-            for ignored_id in ignored_ids:
-                self._log_parent_warning(
-                    parent_task,
-                    "Workflow do result_json ignorou automacao "
-                    f"#{ignored_id}: destino nao esta cadastrado como gatilho permitido.",
-                )
+            # Out/2026 (maestro.next_bot): o robô pode pedir pelo nome e não precisa de gatilho
+            # cadastrado, desde que a automação seja ativa e do mesmo repositório (área) da
+            # automação que terminou. Fora disso, o pedido é ignorado com aviso na task.
+            requests_by_target = {}
+            for item in workflow_requests:
+                target_id = self._resolve_workflow_target(parent_task, item)
+                if target_id is not None:
+                    requests_by_target[target_id] = item
 
-            triggers = [
-                trigger
-                for trigger in triggers
-                if trigger.target_automation_id in requests_by_target
-            ]
+            triggers_by_target = {trigger.target_automation_id: trigger for trigger in triggers}
+            selected = []
+            for target_id in requests_by_target:
+                trigger = triggers_by_target.get(target_id)
+                if trigger is None:
+                    trigger = SimpleNamespace(
+                        id=None,
+                        source_automation_id=parent_task.automation_id,
+                        target_automation_id=target_id,
+                        priority_override=None,
+                        inherit_parent_parameters=False,
+                    )
+                selected.append(trigger)
+            triggers = selected
 
         created_tasks: list[Task] = []
         for trigger in triggers:
@@ -209,6 +220,48 @@ class AutomationTriggerService:
         # Cadeia longa demais também é tratada como ciclo: ninguém encadeia 25 automações de propósito.
         return current is not None
 
+    def _resolve_workflow_target(self, parent_task: Task, item: dict[str, Any]) -> int | None:
+        """Id da automação pedida pelo robô (por id ou por nome), ou None (com aviso) se não pode."""
+        parent_automation = getattr(parent_task, "automation", None)
+        if parent_automation is None:
+            parent_automation = self.task_repository.get_automation_by_id(parent_task.automation_id)
+        repository_id = getattr(parent_automation, "repository_id", None)
+
+        target = None
+        name = item.get("automation")
+        if isinstance(name, str) and name.strip():
+            stmt = (
+                select(Automation)
+                .where(Automation.repository_id == repository_id)
+                .where((Automation.name == name.strip()) | (Automation.label == name.strip()))
+                .order_by(Automation.active.desc(), Automation.id.asc())
+            )
+            target = self.db.execute(stmt).scalars().first()
+            if target is None:
+                self._log_parent_warning(
+                    parent_task,
+                    f"Proximo robo ignorado: nenhuma automacao chamada '{name.strip()}' no mesmo repositorio.",
+                )
+                return None
+        elif isinstance(item.get("automation_id"), int):
+            target = self.task_repository.get_automation_by_id(item["automation_id"])
+            if target is None:
+                self._log_parent_warning(parent_task, f"Proximo robo ignorado: automacao #{item['automation_id']} nao existe.")
+                return None
+            if target.repository_id != repository_id:
+                self._log_parent_warning(
+                    parent_task,
+                    f"Proximo robo ignorado: automacao #{target.id} e de outro repositorio.",
+                )
+                return None
+        else:
+            return None
+
+        if not target.active:
+            self._log_parent_warning(parent_task, f"Proximo robo ignorado: automacao #{target.id} esta inativa.")
+            return None
+        return target.id
+
     def _parse_result_workflow(self, parent_task: Task) -> list[dict[str, Any]] | None:
         raw_result = (parent_task.result_json or "").strip()
         if not raw_result:
@@ -255,8 +308,9 @@ class AutomationTriggerService:
                 continue
 
             automation_id = item.get("automation_id")
-            if not isinstance(automation_id, int):
-                self._log_parent_warning(parent_task, "Item de workflow sem automation_id numerico; item ignorado.")
+            automation_name = item.get("automation")
+            if not isinstance(automation_id, int) and not (isinstance(automation_name, str) and automation_name.strip()):
+                self._log_parent_warning(parent_task, "Item de workflow sem automation_id numerico nem automation (nome); item ignorado.")
                 continue
 
             parameters = item.get("parameters")
@@ -266,7 +320,8 @@ class AutomationTriggerService:
 
             parsed_items.append(
                 {
-                    "automation_id": automation_id,
+                    "automation_id": automation_id if isinstance(automation_id, int) else None,
+                    "automation": automation_name.strip() if isinstance(automation_name, str) else None,
                     "parameters": parameters,
                 }
             )

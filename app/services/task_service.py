@@ -196,8 +196,9 @@ class TaskService:
         if not runner:
             return None
 
-        period_start = runner.created_at
-        period_end = task.finished_at or datetime.now(UTC)
+        # SQLite (ambiente local) devolve datas sem fuso; SQL Server devolve com. Normaliza as duas.
+        period_start = as_aware(runner.created_at)
+        period_end = as_aware(task.finished_at) or datetime.now(UTC)
 
         if not period_start or not period_end or period_end <= period_start:
             return {
@@ -259,6 +260,9 @@ class TaskService:
             "dispatch_attempts": task.dispatch_attempts,
             "stop_requested": task.stop_requested,
             "waiting_reason": task.waiting_reason if task.status == TaskStatus.WAITING else None,
+            "progress_current": task.progress_current,
+            "progress_total": task.progress_total,
+            "progress_text": task.progress_text,
             "correlation_id": task.correlation_id,
             "queue_name": task.queue_name,
             "inactivity_timeout_seconds": task.inactivity_timeout_seconds,
@@ -359,6 +363,9 @@ class TaskService:
                     "parent_task_id": task.parent_task_id,
                     "stop_requested": task.stop_requested,
                     "waiting_reason": task.waiting_reason if task.status == TaskStatus.WAITING else None,
+                    "progress_current": task.progress_current,
+                    "progress_total": task.progress_total,
+                    "progress_text": task.progress_text,
                     "correlation_id": task.correlation_id,
                     "queue_name": task.queue_name,
                     "execution_duration_seconds": _calculate_execution_duration_seconds(task),

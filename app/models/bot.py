@@ -46,6 +46,8 @@ class Bot(Base, BaseModelMixin, TimestampMixin):
     timeout_default: Mapped[int] = mapped_column(Integer, nullable=False, default=3600)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
     auto_update: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Robô antigo lê o caminho do JSON da task em sys.argv[1]; robô com maestro não precisa.
+    reads_task_file_arg: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="1")
 
     # "Release": versão escolhida pelo usuário para executar (voltar/avançar).
     # Nula = segue a mais nova. Sem FK de propósito: bots <-> bot_versions em

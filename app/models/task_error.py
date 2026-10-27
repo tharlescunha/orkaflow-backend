@@ -58,4 +58,13 @@ class TaskError(Base, BaseModelMixin, TimestampMixin):
     )
 
     task = relationship("Task", back_populates="errors")
+
+    @property
+    def error_screenshot_base64(self) -> str | None:
+        """Print do erro em base64 para os schemas (TaskErrorListItem/TaskErrorRead) lerem direto do modelo."""
+        if not self.error_screenshot:
+            return None
+        import base64
+
+        return base64.b64encode(self.error_screenshot).decode("ascii")
     

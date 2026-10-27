@@ -64,6 +64,9 @@ _TASK_EXAMPLE = {
     "dispatch_attempts": 1,
     "stop_requested": False,
     "waiting_reason": None,
+    "progress_current": None,
+    "progress_total": None,
+    "progress_text": None,
     "correlation_id": None,
     "queue_name": None,
     "inactivity_timeout_seconds": None,
@@ -180,6 +183,7 @@ _BOT_EXAMPLE = {
     "timeout_default": 3600,
     "active": True,
     "auto_update": False,
+    "reads_task_file_arg": True,
     "current_version": "1.4.2",
     "release_version": "1.0.0",
     "created_at": "2026-05-04T12:00:00Z",
@@ -1004,7 +1008,9 @@ GUIDE.update({
             "- `execution_mode`: `background` (sem tela, pode rodar em paralelo) ou `foreground` "
             "(usa a tela; 1 por máquina).\n"
             "- `timeout_default`: segundos, usado quando a task não informa timeout.\n"
-            "- `auto_update`: o worker acompanha a branch do Git automaticamente.\n\n"
+            "- `auto_update`: o worker acompanha a branch do Git automaticamente.\n"
+            "- `reads_task_file_arg`: `true` (padrão) = o worker passa o caminho do JSON da task em `sys.argv[1]` "
+            "(robôs antigos); `false` = chama só `python main.py` (robô com a biblioteca maestro).\n\n"
             "404 se o repositório não existe; 409 se já existe bot com o mesmo nome no repositório.\n\n" + _BEARER
         ),
         "example_request": {
@@ -2693,6 +2699,17 @@ GUIDE.update({
             "code": "SAP_LOGIN",
         },
         "example_response": {"message": "Erro registrado com sucesso.", "task_id": 42730},
+    },
+    "POST /api/v1/worker/tasks/{task_id}/progress": {
+        "summary": "Etapa atual do robô (maestro.step)",
+        "description": (
+            _WORKER + "O robô chama `maestro.step(3, 7, 'Enviando ao SAP')`; o worker repassa aqui quando a etapa "
+            "muda. Grava `progress_current`, `progress_total` e `progress_text` na task (só enquanto ela está em "
+            "execução) e aparece na lista e no detalhe. Ignorado depois que a task termina."
+            + _WORKER_AUTH_ERRORS
+        ),
+        "example_request": {"uuid": "6f1c2a9e-0000-4000-8000-000000000005", "token": "token-do-runner-exemplo", "current": 3, "total": 7, "text": "Enviando ao SAP"},
+        "example_response": {"task_id": 42730, "progress_current": 3, "progress_total": 7, "progress_text": "Enviando ao SAP"},
     },
     "POST /api/v1/worker/tasks/{task_id}/credential-alert": {
         "summary": "Robô avisou que a credencial não serve mais (senha expirada, incorreta ou usuário bloqueado)",

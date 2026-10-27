@@ -189,6 +189,10 @@ class TaskRead(OrkaBaseSchema):
     stop_requested: bool
     # Por que está na fila (só quando status=waiting): automação ocupada, grupo exclusivo, sem runner.
     waiting_reason: str | None = None
+    # Etapa informada pelo robô (maestro.step); nulos quando o robô não informa.
+    progress_current: int | None = None
+    progress_total: int | None = None
+    progress_text: str | None = None
 
     correlation_id: str | None = None
     queue_name: str | None = None
@@ -246,6 +250,9 @@ class TaskListItem(OrkaBaseSchema):
     parent_task_id: int | None = None
     stop_requested: bool
     waiting_reason: str | None = None
+    progress_current: int | None = None
+    progress_total: int | None = None
+    progress_text: str | None = None
     correlation_id: str | None = None
     queue_name: str | None = None
 
