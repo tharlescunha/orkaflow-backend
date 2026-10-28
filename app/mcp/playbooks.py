@@ -93,6 +93,7 @@ Máquinas / runners (menu Execução):
 - Listar e status: listar_maquinas / status_maquina, ou GET /api/v1/runners/ e GET /api/v1/runners/overview.
 - Painel completo de uma máquina: GET /api/v1/runners/{runner_id}/overview.
 - Renomear/rótulo/ativar/desativar: PUT /api/v1/runners/{runner_id} (ex.: {"label": "RPA 14", "enabled": true}).
+  Usuário de acesso da máquina: login_user (cadastrado); os_user é o usuário do Windows em que o worker roda.
 - Configuração de execução: GET/PUT /api/v1/runners/{runner_id}/config (max_concurrency 1-5, polling_interval >= 5).
   O worker aplica na próxima sincronização.
 - Quais automações rodam nela: vínculos ficam na automação (assunto automacoes, passo 3).

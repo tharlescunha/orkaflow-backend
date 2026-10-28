@@ -7,7 +7,7 @@ from app.repositories.runner_repository import RunnerRepository
 from app.services.task_rules import MAX_CONCURRENCY_CAP, MIN_CONCURRENCY
 from app.schemas.runner import RunnerConfigUpdate, RunnerCreate, RunnerRead, RunnerUpdate
 from datetime import UTC, datetime
-from app.services.task_rules import release_waiting_tasks_of_runner, runner_in_maintenance
+from app.services.task_rules import as_aware, release_waiting_tasks_of_runner, runner_in_maintenance
 from app.schemas.runner_overview import (
     RunnerOverviewLinkedBot,
     RunnerOverviewLastExecution,
@@ -53,6 +53,8 @@ class RunnerService:
                 "access_remote": runner.access_remote,
                 "enabled": runner.enabled,
                 "status": display_status,
+                "login_user": runner.login_user,
+                "os_user": runner.os_user,
                 "last_heartbeat": runner.last_heartbeat,
                 "created_at": runner.created_at,
                 "updated_at": runner.updated_at,
@@ -195,13 +197,15 @@ class RunnerService:
     
     def _task_to_overview_item(self, task):
         execution_duration_seconds = None
+        started_at = as_aware(task.started_at)
+        finished_at = as_aware(task.finished_at)
 
-        if task.started_at and task.finished_at:
-            execution_duration_seconds = int((task.finished_at - task.started_at).total_seconds())
-        elif task.started_at and str(task.status) == "TaskStatus.RUNNING":
-            execution_duration_seconds = int((datetime.now(UTC) - task.started_at).total_seconds())
-        elif task.started_at and getattr(task.status, "value", None) == "running":
-            execution_duration_seconds = int((datetime.now(UTC) - task.started_at).total_seconds())
+        if started_at and finished_at:
+            execution_duration_seconds = int((finished_at - started_at).total_seconds())
+        elif started_at and str(task.status) == "TaskStatus.RUNNING":
+            execution_duration_seconds = int((datetime.now(UTC) - started_at).total_seconds())
+        elif started_at and getattr(task.status, "value", None) == "running":
+            execution_duration_seconds = int((datetime.now(UTC) - started_at).total_seconds())
 
         return RunnerOverviewTaskItem(
             task_id=task.id,
@@ -270,10 +274,11 @@ class RunnerService:
 
         now = datetime.now(UTC)
 
+        created_at = as_aware(runner.created_at) or now
         if date_from is not None:
-            registered_base = date_from if date_from > runner.created_at else runner.created_at
+            registered_base = date_from if date_from > created_at else created_at
         else:
-            registered_base = runner.created_at
+            registered_base = created_at
 
         if date_to is not None:
             utilization_end = date_to
@@ -332,6 +337,8 @@ class RunnerService:
                 access_remote=runner.access_remote,
                 enabled=runner.enabled,
                 status=getattr(self._build_runner_read(runner), "status"),
+                login_user=runner.login_user,
+                os_user=runner.os_user,
                 created_at=runner.created_at,
                 updated_at=runner.updated_at,
                 last_heartbeat=runner.last_heartbeat,
@@ -411,8 +418,8 @@ class RunnerService:
                 automation_id=automation_id,
             )
 
-            registered_base = runner.created_at
-            if date_from is not None and date_from > runner.created_at:
+            registered_base = as_aware(runner.created_at) or now
+            if date_from is not None and date_from > registered_base:
                 registered_base = date_from
             utilization_end = date_to if date_to is not None else now
             registered_seconds = max(0, int((utilization_end - registered_base).total_seconds()))

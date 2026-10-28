@@ -45,6 +45,10 @@ class Runner(Base, BaseModelMixin, TimestampMixin):
     )
 
     access_remote: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Usuário com que a equipe acessa a máquina (cadastrado no painel) e usuário do Windows em que o
+    # worker está rodando (informado pelo próprio worker no heartbeat). Out/2026.
+    login_user: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    os_user: Mapped[str | None] = mapped_column(String(150), nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
 
     # Runner removido pelo administrador: some das listagens e não executa mais nada.

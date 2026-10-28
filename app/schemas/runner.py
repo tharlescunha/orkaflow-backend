@@ -47,6 +47,9 @@ class RunnerBase(OrkaBaseSchema):
     access_remote: bool = False
     enabled: bool = True
     status: RunnerStatus = RunnerStatus.OFFLINE
+    # Usuário de acesso (cadastrado) e usuário do Windows em que o worker roda (automático).
+    login_user: str | None = Field(default=None, max_length=150)
+    os_user: str | None = Field(default=None, max_length=150)
 
 
 class RunnerCreate(RunnerBase):
@@ -66,6 +69,7 @@ class RunnerUpdate(OrkaBaseSchema):
     access_remote: bool | None = None
     enabled: bool | None = None
     status: RunnerStatus | None = None
+    login_user: str | None = Field(default=None, max_length=150)
 
 
 class RunnerRead(RunnerBase):
@@ -95,5 +99,7 @@ class RunnerListItem(OrkaBaseSchema):
     enabled: bool
     host_name: str | None = None
     ip: str | None = None
+    login_user: str | None = None
+    os_user: str | None = None
     last_heartbeat: datetime | None = None
     

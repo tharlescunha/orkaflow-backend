@@ -80,6 +80,8 @@ class RunnerOverviewRunnerInfo(BaseModel):
     access_remote: bool
     enabled: bool
     status: str
+    login_user: str | None = None
+    os_user: str | None = None
     created_at: datetime
     updated_at: datetime | None = None
     last_heartbeat: datetime | None = None

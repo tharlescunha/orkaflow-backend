@@ -49,6 +49,8 @@ class WorkerHeartbeatRequest(OrkaBaseSchema):
     token: str
     ip: str | None = None
     running_tasks: int = 0
+    # Usuário do Windows em que o worker roda (DOMINIO\usuario). Opcional: worker antigo não manda.
+    os_user: str | None = None
 
 
 class WorkerHeartbeatResponse(OrkaBaseSchema):

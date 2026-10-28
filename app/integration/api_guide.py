@@ -156,6 +156,8 @@ _RUNNER_EXAMPLE = {
     "access_remote": True,
     "enabled": True,
     "status": "online",
+    "login_user": "ALZ\\rpa.suprimentos",
+    "os_user": "ALZ\\rpa.suprimentos",
     "last_heartbeat": _TS,
     "created_at": "2026-04-01T10:00:00Z",
     "updated_at": _TS,
@@ -863,6 +865,8 @@ GUIDE.update({
             "Atualização parcial dos dados cadastrais (`label`, `enabled`, `access_remote`, `status`...).\n\n"
             "- `enabled=false` **desativa** a máquina: o worker passa a ser recusado (403) e não pega tasks.\n"
             "- `status=maintenance` impede a máquina de assumir novas tasks.\n"
+            "- `login_user`: usuário com que a equipe acessa a máquina (cadastro livre, ex.: `ALZ\\rpa.suprimentos`). "
+            "`os_user` é o usuário do Windows em que o worker roda, informado pelo próprio worker (não se edita).\n"
             "- 409 se o novo `name` já existe.\n\n" + _BEARER
         ),
         "example_request": {"label": "RPA 14 - Suprimentos", "enabled": True},

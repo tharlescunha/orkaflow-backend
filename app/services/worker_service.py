@@ -465,6 +465,9 @@ class WorkerService:
 
         if payload.ip:
             runner.ip = payload.ip
+        os_user = (getattr(payload, "os_user", None) or "").strip()[:150]
+        if os_user and runner.os_user != os_user:
+            runner.os_user = os_user
         self._mark_alive(runner, reason="heartbeat")
         self._refresh_runner_status(runner, reason="heartbeat")
 
