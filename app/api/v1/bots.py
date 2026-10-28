@@ -5,6 +5,7 @@ from app.api.deps import get_current_user
 from app.core.database import get_db
 from app.schemas.bot import BotCreate, BotListResponse, BotRead, BotSourceInspect, BotSourceInspection, BotUpdate
 from app.services.bot_service import BotService
+from app.services.git_environment_service import GitEnvironmentService
 from app.services.git_repo_service import inspect_source, mask_url_credentials
 
 router = APIRouter(prefix="/bots", tags=["Bots"])
@@ -30,9 +31,11 @@ def list_bots(
 
 
 @router.post("/inspect-source", response_model=BotSourceInspection)
-def inspect_bot_source(payload: BotSourceInspect, _=Depends(get_current_user)):
-    """Confere se o link do Git funciona e traz nome, descrição, último commit e última tag (nada é gravado)."""
-    info = inspect_source(payload.source_url)
+def inspect_bot_source(payload: BotSourceInspect, db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """Confere se o link do Git funciona e traz nome, descrição, último commit e última tag (nada é gravado).
+
+    Link limpo usa o token do ambiente de Git que cobre o endereço (Configurações)."""
+    info = inspect_source(GitEnvironmentService(db).resolve_url(payload.source_url))
     return {
         "name": info.name,
         "description": info.description,

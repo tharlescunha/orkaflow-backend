@@ -33,6 +33,12 @@ _WORKER_AUTH_ERRORS = (
 
 _TS = "2026-10-21T13:45:00Z"
 
+_GIT_ENV_EXAMPLE = {
+    "id": 1, "name": "DevOps · ALZ Grãos", "url_prefix": "https://dev.azure.com/alzgraos/", "username": None,
+    "token_hint": "k9Qa", "expires_at": "2027-04-30T00:00:00Z", "expiry_status": "valido", "days_to_expire": 180,
+    "active": True, "created_at": _TS, "updated_at": _TS,
+}
+
 _TASK_EXAMPLE = {
     "id": 42723,
     "automation_id": 12,
@@ -982,7 +988,9 @@ GUIDE.update({
             "**Não grava nada.** Devolve o nome sugerido (do repositório), a descrição (primeiro parágrafo do "
             "README), o último commit da branch padrão, a última tag e a versão sugerida (a tag sem o `v`, "
             "ou `1.0.0` se não houver tag).\n\n"
-            "Corpo: `source_url` (com token dentro, se for repositório privado; ele nunca volta na resposta).\n\n"
+            "Corpo: `source_url`. Link limpo (sem token) usa o token do **ambiente de Git** que cobre o endereço "
+            "(Configurações → Ambientes de Git, ex.: `https://dev.azure.com/alzgraos/`); link com token dentro "
+            "continua valendo como está. O token nunca volta na resposta.\n\n"
             "Use antes de `POST /api/v1/bots/` para preencher `name`, `description` e `initial_version`.\n\n" + _BEARER
         ),
         "example_request": {"source_url": "https://git.exemplo.com/rpa/bot-estoque-po.git"},
@@ -1008,7 +1016,9 @@ GUIDE.update({
             "Cria o bot e, junto, a primeira versão (`initial_version`, ex.: `1.0.0`). O criador é o usuário "
             "do token.\n\n"
             "Campos principais:\n"
-            "- `technology` (ex.: `python`), `source_type` (ex.: `git`), `source_url` (repositório Git).\n"
+            "- `technology` (ex.: `python`), `source_type` (ex.: `git`), `source_url` (repositório Git). Pode ser o "
+            "link limpo, sem token: o backend usa o token do ambiente de Git que cobre o endereço (Configurações); "
+            "400 se não houver ambiente nem token no link. Link com token dentro continua aceito.\n"
             "- `entrypoint`: arquivo que o worker executa (ex.: `main.py`); `requirements_file` opcional.\n"
             "- `execution_mode`: `background` (sem tela, pode rodar em paralelo) ou `foreground` "
             "(usa a tela; 1 por máquina).\n"
@@ -2067,6 +2077,47 @@ GUIDE.update({
             "`{{retorno.campo}}`.\n\n" + _BEARER
         ),
         "example_response": [{"name": "automacao", "description": "Nome da automação", "example": "Automacao_Estoque_PO"}],
+    },
+    "GET /api/v1/settings/git-environments": {
+        "summary": "Lista os ambientes de Git (token por prefixo de URL)",
+        "description": (
+            "Configurações gerais. Cada ambiente tem um `url_prefix` (ex.: `https://dev.azure.com/alzgraos/` ou "
+            "`https://github.com/tharlescunha/`) e um token guardado criptografado. Bot cadastrado com o link limpo "
+            "usa o token do ambiente cujo prefixo casa com o link (o mais longo ganha). A resposta traz só "
+            "`token_hint` (últimos caracteres) e a situação do vencimento (`expiry_status`: valido | vence_em_breve | "
+            "vencido, `days_to_expire`).\n\n" + _ADMIN
+        ),
+        "example_response": [_GIT_ENV_EXAMPLE],
+    },
+    "POST /api/v1/settings/git-environments": {
+        "summary": "Cadastra um ambiente de Git",
+        "description": (
+            "Campos: `name`, `url_prefix` (começo dos links; sem usuário/token dentro), `token` (obrigatório; nunca "
+            "volta), `username` (opcional, vai antes do token na URL de clone), `expires_at` (opcional, para o aviso "
+            "de vencimento) e `active`. 409 se já existe ambiente com o mesmo prefixo.\n\n" + _ADMIN
+        ),
+        "example_request": {"name": "DevOps · ALZ Grãos", "url_prefix": "https://dev.azure.com/alzgraos/", "token": "token-do-devops", "username": None, "expires_at": "2027-04-30T00:00:00Z", "active": True},
+        "example_response": _GIT_ENV_EXAMPLE,
+    },
+    "PUT /api/v1/settings/git-environments/{environment_id}": {
+        "summary": "Altera um ambiente de Git",
+        "description": "Mesmos campos do POST. `token` vazio ou ausente mantém o token salvo.\n\n" + _ADMIN,
+        "example_request": {"name": "DevOps · ALZ Grãos", "url_prefix": "https://dev.azure.com/alzgraos/", "token": None, "username": None, "expires_at": "2027-04-30T00:00:00Z", "active": True},
+        "example_response": _GIT_ENV_EXAMPLE,
+    },
+    "DELETE /api/v1/settings/git-environments/{environment_id}": {
+        "summary": "Remove um ambiente de Git",
+        "description": "Bots cadastrados com link limpo desse prefixo param de clonar até outro ambiente cobrir o endereço. Prefira `active=false`.\n\n" + _ADMIN,
+        "example_response": {"message": "Ambiente removido."},
+    },
+    "POST /api/v1/settings/git-environments/check-url": {
+        "summary": "De onde vem o token para um link de repositório",
+        "description": (
+            "Usado pelo formulário do bot abaixo do campo do link. `token_source`: `link` (o link já tem token), "
+            "`ambiente` (vai usar o ambiente informado) ou `nenhum` (cole o link com token ou cadastre o ambiente).\n\n" + _BEARER
+        ),
+        "example_request": {"url": "https://dev.azure.com/alzgraos/PPI%20-%20ALZ%20Gr%C3%A3os/_git/RPA_INSUMOS_APROV_OV"},
+        "example_response": {"token_source": "ambiente", "environment_id": 1, "environment_name": "DevOps · ALZ Grãos", "expiry_status": "valido", "days_to_expire": 180, "message": "Sem token no link: vai usar o token do ambiente DevOps · ALZ Grãos."},
     },
     "GET /api/v1/events/rules": {
         "summary": "Lista as regras de evento",

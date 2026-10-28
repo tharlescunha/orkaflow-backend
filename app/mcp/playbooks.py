@@ -58,6 +58,10 @@ Operação do dia a dia (menu Operação):
 Bots e versões (menu Automação):
 1. Repositório (área) do bot: GET /api/v1/repositories/ (crie com POST se não existir; veja assunto repositorios).
 2. Conferir o link do Git primeiro: POST /api/v1/bots/inspect-source com source_url (valida o acesso e traz
+   Token: o link pode ir limpo, sem token; o backend usa o token do ambiente de Git que cobre o endereço
+   (Configurações → Ambientes de Git, ex.: https://dev.azure.com/alzgraos/). Confira antes com
+   POST /api/v1/settings/git-environments/check-url {url}: token_source link | ambiente | nenhum. Link com
+   token dentro continua aceito. Nunca peça nem mostre o token.
    name, description e suggested_version). Depois criar o bot: POST /api/v1/bots/ com name, repository_id,
    technology (python), source_type (git), source_url
    (URL do Git), entrypoint (ex.: main.py), execution_mode (background = sem tela, pode paralelo; foreground = usa a
@@ -202,6 +206,7 @@ Guia do Bot. Robôs antigos (JSON por argumento, print, sys.exit) continuam func
 O que entrou em outubro/2026 (tudo já em produção):
 - Saúde de credenciais: status na credencial, robô avisa senha vencida, agendamentos pausam, 409 em task nova.
 - Eventos (Integração → Eventos): regras "Quando → Então" por robô com requisições HTTP (ex.: Teams).
+- Ambientes de Git (Configurações): token por prefixo de URL; bot novo pode ser cadastrado com o link limpo.
 - Retentativa automática por agendamento (retry_max, retry_delay_seconds, retry_on).
 - Calendários (dias úteis, feriados, janelas) no agendamento, e "N-ésimo dia útil do mês".
 - Fila com explicação: waiting_reason na task; encadeamento visível (parent_task_id, children, execution_mode

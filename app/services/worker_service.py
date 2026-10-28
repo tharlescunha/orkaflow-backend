@@ -15,6 +15,7 @@ from app.core.exceptions import (
 )
 from app.services import event_service, retry_service
 from app.services.credential_health_service import CredentialHealthService
+from app.services.git_environment_service import GitEnvironmentService
 from app.services.task_events import add_task_log
 from app.core.security import (
     decrypt_credential_value,
@@ -513,6 +514,7 @@ class WorkerService:
         )
 
         bot_payloads: list[dict] = []
+        git_environments = GitEnvironmentService(self.db)
         added_bot_ids: set[int] = set()
 
         for link in automation_links:
@@ -537,6 +539,8 @@ class WorkerService:
 
             # Mesma regra de versão usada na criação das tasks (ativa; fallback última).
             active_version = self.task_repository.get_latest_bot_version_for_bot(bot.id)
+            # Link limpo ganha o token do ambiente de Git (Configurações); link com token fica como está.
+            clone_url = git_environments.resolve_url(bot.source_url)
 
             bot_payloads.append(
                 {
@@ -545,8 +549,8 @@ class WorkerService:
                     "name": bot.name,
                     "technology": bot.technology.value if hasattr(bot.technology, "value") else str(bot.technology),
                     "source_type": bot.source_type.value if hasattr(bot.source_type, "value") else str(bot.source_type),
-                    "source_url": bot.source_url,
-                    "repository_url": bot.source_url,
+                    "source_url": clone_url,
+                    "repository_url": clone_url,
                     "entrypoint": bot.entrypoint,
                     "requirements_file": bot.requirements_file,
                     "timeout_default": bot.timeout_default,

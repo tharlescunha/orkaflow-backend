@@ -9,6 +9,7 @@ from app.models.bot_version import BotVersion
 from app.models.user import User
 
 from app.repositories.bot_version_repository import BotVersionRepository
+from app.services.git_environment_service import GitEnvironmentService
 from app.services.git_repo_service import mask_url_credentials
 
 
@@ -125,6 +126,7 @@ class BotService:
 
     def create(self, data: dict):
         _reject_masked_url(data)
+        GitEnvironmentService(self.db).ensure_usable_for_bot(data.get("source_url"))
         initial_version = data.pop("initial_version")
         created_by = data.pop("created_by", None)
 
@@ -184,6 +186,8 @@ class BotService:
 
     def update(self, bot_id: int, data: dict):
         _reject_masked_url(data)
+        if data.get("source_url"):
+            GitEnvironmentService(self.db).ensure_usable_for_bot(data["source_url"])
         bot = self.repo.get_by_id(self.db, bot_id)
         if not bot:
             raise NotFoundException("Bot não encontrado.")

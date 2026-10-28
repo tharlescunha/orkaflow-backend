@@ -34,6 +34,7 @@ from app.models.notification_channel import NotificationChannel, NotificationLog
 from app.models.env_variable import EnvVariable
 from app.models.runner_log_line import RunnerLogLine
 from app.models.api_token import ApiToken
+from app.models.git_environment import GitEnvironment
 
 
 __all__ = [

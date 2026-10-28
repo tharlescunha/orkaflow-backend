@@ -10,6 +10,7 @@ from app.models.bot import Bot
 from app.models.bot_version import BotVersion
 from app.models.user import User
 from app.repositories.bot_version_repository import BotVersionRepository
+from app.services.git_environment_service import GitEnvironmentService
 from app.services.git_repo_service import GitCommit, GitRepoService
 
 
@@ -177,7 +178,8 @@ class BotVersionService:
         last = versions[0] if versions else None
         last_with_commit = next((v for v in versions if v.commit_hash), None)
 
-        snapshot = GitRepoService(bot.id, bot.source_url).snapshot(
+        clone_url = GitEnvironmentService(self.db).resolve_url(bot.source_url)
+        snapshot = GitRepoService(bot.id, clone_url).snapshot(
             branch=last_with_commit.branch if last_with_commit else None,
             since_commit=last_with_commit.commit_hash if last_with_commit else None,
         )
