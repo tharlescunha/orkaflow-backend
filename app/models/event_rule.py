@@ -22,6 +22,9 @@ class EventRule(Base, BaseModelMixin, TimestampMixin):
     # Quando: escopo (automation | bot | all) + gatilho.
     scope_type: Mapped[str] = mapped_column(String(20), nullable=False, default="automation")
     scope_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    # Vários alvos de uma vez (ex.: os 4 bots do projeto Insumos): lista de ids em JSON. scope_id guarda
+    # o primeiro, para quem só conhece o campo antigo. Vazio/nulo = só o scope_id.
+    scope_ids_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     # task_error | task_success | task_timeout | credential_invalid | result_contains | exit_code
     trigger_type: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
     # result_contains: {"key": "status", "value": "reprovado"}; exit_code: {"code": 3}

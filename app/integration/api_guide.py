@@ -2074,7 +2074,7 @@ GUIDE.update({
         "example_response": [
             {
                 "id": 1, "name": "Avisar no Teams", "active": True, "scope_type": "automation", "scope_id": 16,
-                "scope_label": "Automacao_Estoque_PO", "trigger_type": "credential_invalid",
+                "scope_ids": [16], "scope_label": "Automacao_Estoque_PO", "trigger_type": "credential_invalid",
                 "trigger_label": "Credencial inválida", "trigger_config": {"key": None, "value": None, "code": None},
                 "pre_steps": [], "url": "https://prod-00.westus.logic.azure.com/workflows/.../triggers/manual/paths/invoke",
                 "method": "POST", "headers": {"Content-Type": "application/json"},
@@ -2087,13 +2087,14 @@ GUIDE.update({
     "POST /api/v1/events/rules": {
         "summary": "Cria uma regra de evento (Quando → Então)",
         "description": (
-            "Campos: `name`, `active`, `scope_type` (automation | bot | all) e `scope_id`, `trigger_type` e "
+            "Campos: `name`, `active`, `scope_type` (automation | bot | all) e `scope_id` ou `scope_ids` (lista: a mesma "
+            "regra para vários bots/automações, ex.: os 4 bots do projeto Insumos), `trigger_type` e "
             "`trigger_config` (`key`/`value` para result_contains, `code` para exit_code), `pre_steps` (mesmo "
             "formato das etapas do canal de notificação: login que devolve token, etc.), `url`, `method`, "
             "`headers`, `body_template` e `timeout_seconds`. A falha de um disparo nunca afeta a task.\n\n" + _BEARER
         ),
         "example_request": {
-            "name": "Avisar no Teams", "active": True, "scope_type": "automation", "scope_id": 16,
+            "name": "Avisar no Teams", "active": True, "scope_type": "automation", "scope_id": 16, "scope_ids": [16],
             "trigger_type": "credential_invalid", "trigger_config": {}, "pre_steps": [],
             "url": "https://prod-00.westus.logic.azure.com/workflows/.../triggers/manual/paths/invoke",
             "method": "POST", "headers": {"Content-Type": "application/json"},

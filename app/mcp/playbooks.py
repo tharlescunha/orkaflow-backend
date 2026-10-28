@@ -139,6 +139,7 @@ Variáveis de ambiente dos robôs (menu Automação > Variáveis; exige administ
 """,
     "credenciais": """\
 Eventos (menu Integração → Eventos): regras "Quando → Então" por robô. Quando = automação/bot/qualquer +
+(scope_ids aceita vários bots ou automações na mesma regra, ex.: os 4 bots de um projeto) +
 gatilho (task_error, task_success, task_timeout, credential_invalid, result_contains chave/valor, exit_code N).
 Então = etapas prévias (ex.: login que guarda {{token}}) + requisição principal com {{variáveis}}
 (automacao, task_id, erro, retorno.campo, credencial, motivo, link_task...). Exemplo: avisar no Teams via

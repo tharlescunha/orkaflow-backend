@@ -33,6 +33,8 @@ class EventRuleBase(OrkaBaseSchema):
     active: bool = True
     scope_type: str = "automation"
     scope_id: int | None = None
+    # Vários alvos (bots ou automações). Se vier, scope_id passa a ser o primeiro da lista.
+    scope_ids: list[int] = []
     trigger_type: str
     trigger_config: EventTriggerConfig = EventTriggerConfig()
     pre_steps: list[NotificationStep] = []
@@ -95,6 +97,7 @@ class EventRuleRead(OrkaBaseSchema):
     active: bool
     scope_type: str
     scope_id: int | None = None
+    scope_ids: list[int] = []
     scope_label: str | None = None
     trigger_type: str
     trigger_label: str

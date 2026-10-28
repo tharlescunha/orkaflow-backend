@@ -127,6 +127,7 @@ def rule_to_read(db: Session, rule: EventRule, runs_count: int | None = None) ->
         "active": rule.active,
         "scope_type": rule.scope_type,
         "scope_id": rule.scope_id,
+        "scope_ids": rule_scope_ids(rule),
         "scope_label": _scope_label(db, rule),
         "trigger_type": rule.trigger_type,
         "trigger_label": trigger_label(rule.trigger_type),
@@ -145,27 +146,68 @@ def rule_to_read(db: Session, rule: EventRule, runs_count: int | None = None) ->
     }
 
 
+def rule_scope_ids(rule: EventRule) -> list[int]:
+    """Todos os alvos da regra (lista em scope_ids_json, senão o scope_id). Vazia para 'all'."""
+    if rule.scope_type == "all":
+        return []
+    ids: list[int] = []
+    for raw in _loads(rule.scope_ids_json, []) or []:
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if value > 0 and value not in ids:
+            ids.append(value)
+    if not ids and rule.scope_id:
+        ids.append(int(rule.scope_id))
+    return ids
+
+
+def _normalize_scope_ids(data: dict) -> list[int]:
+    """scope_ids do payload (ou o scope_id antigo), sem repetidos e na ordem enviada."""
+    ids: list[int] = []
+    for raw in list(data.get("scope_ids") or []) + [data.get("scope_id")]:
+        if raw in (None, ""):
+            continue
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if value > 0 and value not in ids:
+            ids.append(value)
+    return ids
+
+
 def _scope_label(db: Session, rule: EventRule) -> str | None:
     if rule.scope_type == "all":
         return "Qualquer automação"
-    if rule.scope_id is None:
+    ids = rule_scope_ids(rule)
+    if not ids:
         return None
-    if rule.scope_type == "automation":
-        automation = db.get(Automation, rule.scope_id)
-        return (automation.label or automation.name) if automation else f"automação #{rule.scope_id} (removida)"
-    bot = db.get(Bot, rule.scope_id)
-    return bot.name if bot else f"bot #{rule.scope_id} (removido)"
+    names: list[str] = []
+    for scope_id in ids:
+        if rule.scope_type == "automation":
+            automation = db.get(Automation, scope_id)
+            names.append((automation.label or automation.name) if automation else f"automação #{scope_id} (removida)")
+        else:
+            bot = db.get(Bot, scope_id)
+            names.append(bot.name if bot else f"bot #{scope_id} (removido)")
+    return ", ".join(names)
 
 
 def _validate_rule_data(db: Session, data: dict) -> None:
     scope_type = data.get("scope_type")
-    scope_id = data.get("scope_id")
-    if scope_type in ("automation", "bot") and not scope_id:
+    scope_ids = _normalize_scope_ids(data)
+    if scope_type in ("automation", "bot") and not scope_ids:
         raise ValidationException("Escolha a automação ou o bot do evento (ou use o escopo 'qualquer').")
-    if scope_type == "automation" and scope_id and db.get(Automation, scope_id) is None:
-        raise ValidationException("Automação não encontrada.")
-    if scope_type == "bot" and scope_id and db.get(Bot, scope_id) is None:
-        raise ValidationException("Bot não encontrado.")
+    if scope_type == "automation":
+        for scope_id in scope_ids:
+            if db.get(Automation, scope_id) is None:
+                raise ValidationException(f"Automação #{scope_id} não encontrada.")
+    if scope_type == "bot":
+        for scope_id in scope_ids:
+            if db.get(Bot, scope_id) is None:
+                raise ValidationException(f"Bot #{scope_id} não encontrado.")
     config = data.get("trigger_config") or {}
     if data.get("trigger_type") == "result_contains" and not (config.get("key") or "").strip():
         raise ValidationException("Para 'Retorno contém' informe a chave do retorno (ex.: status).")
@@ -178,7 +220,9 @@ def _apply(rule: EventRule, data: dict) -> None:
     rule.description = (data.get("description") or None)
     rule.active = bool(data.get("active", True))
     rule.scope_type = data["scope_type"]
-    rule.scope_id = data.get("scope_id") if data["scope_type"] != "all" else None
+    scope_ids = _normalize_scope_ids(data) if data["scope_type"] != "all" else []
+    rule.scope_id = scope_ids[0] if scope_ids else None
+    rule.scope_ids_json = json.dumps(scope_ids) if len(scope_ids) > 1 else None
     rule.trigger_type = data["trigger_type"]
     config = data.get("trigger_config") or {}
     rule.trigger_config_json = json.dumps(
@@ -318,11 +362,12 @@ def _in_scope(rule: EventRule, task: Task | None) -> bool:
         return True
     if task is None:
         return False
+    ids = rule_scope_ids(rule)
     if rule.scope_type == "automation":
-        return rule.scope_id == task.automation_id
+        return task.automation_id in ids
     automation = task.automation
     bot_id = getattr(automation, "bot_id", None) if automation is not None else None
-    return rule.scope_id == bot_id
+    return bot_id in ids
 
 
 def trigger_types_for_task(task: Task) -> list[str]:
@@ -448,10 +493,11 @@ def run_test(db: Session, rule_id: int, task_id: int | None = None) -> EventRun:
 
 def _last_task_for_rule(db: Session, rule: EventRule) -> Task | None:
     stmt = select(Task).order_by(Task.id.desc())
-    if rule.scope_type == "automation" and rule.scope_id:
-        stmt = stmt.where(Task.automation_id == rule.scope_id)
-    elif rule.scope_type == "bot" and rule.scope_id:
-        stmt = stmt.join(Automation, Automation.id == Task.automation_id).where(Automation.bot_id == rule.scope_id)
+    ids = rule_scope_ids(rule)
+    if rule.scope_type == "automation" and ids:
+        stmt = stmt.where(Task.automation_id.in_(ids))
+    elif rule.scope_type == "bot" and ids:
+        stmt = stmt.join(Automation, Automation.id == Task.automation_id).where(Automation.bot_id.in_(ids))
     return db.scalars(stmt.limit(1)).first()
 
 
