@@ -774,8 +774,9 @@ GUIDE.update({
     "DELETE /api/v1/repositories/{repository_id}": {
         "summary": "Desativa um repositório (exclusão lógica)",
         "description": (
-            "Não apaga: marca `active=false` e devolve o repositório. Bots e automações vinculados "
-            "**não** são alterados.\n\n" + _BEARER
+            "Não apaga: marca `active=false` e devolve o repositório. **Todos os bots e automações do "
+            "repositório são desativados junto** (deixam de rodar e de ser sincronizados nas máquinas). "
+            "Reativar o repositório não reativa os bots/automações: isso é feito um a um.\n\n" + _BEARER
         ),
         "example_response": {**_REPOSITORY_EXAMPLE, "active": False},
     },

@@ -305,6 +305,8 @@ def detalhe_task(db: Session, user: User, args: dict) -> dict:
             "versao_bot": task.bot_version.version if task.bot_version else None,
             "agendamento": task.schedule.name if task.schedule else None,
             "mensagem_final": task.final_message,
+            "tem_print_do_erro": any(e.error_screenshot for e in errors),
+            "dica": "Use print_do_erro(task_id) para ver a tela no momento do erro." if any(e.error_screenshot for e in errors) else None,
             "erros": [
                 {
                     "tipo": e.error_type,
@@ -323,6 +325,79 @@ def detalhe_task(db: Session, user: User, args: dict) -> dict:
         }
     )
     return summary
+
+
+def _image_payload(raw) -> dict | None:
+    """bytes/memoryview/str(base64 ou data-url) -> {"data": base64, "mimeType"}; None se vazio."""
+    import base64
+
+    if raw is None:
+        return None
+    if isinstance(raw, memoryview):
+        raw = raw.tobytes()
+    if isinstance(raw, str):
+        text = raw.split(",", 1)[1] if raw.startswith("data:image") else raw
+        try:
+            raw = base64.b64decode(text, validate=True)
+        except Exception:  # noqa: BLE001
+            return None
+    if not isinstance(raw, (bytes, bytearray)) or len(raw) == 0:
+        return None
+    mime = "image/png" if bytes(raw[:8]) == b"\x89PNG\r\n\x1a\n" else "image/jpeg" if bytes(raw[:2]) == b"\xff\xd8" else "image/png"
+    return {"data": base64.b64encode(bytes(raw)).decode("ascii"), "mimeType": mime, "bytes": len(raw)}
+
+
+def print_do_erro(db: Session, user: User, args: dict) -> dict:
+    """Print da tela no momento do erro da task (robô com Maestro ou worker), como imagem."""
+    task_id = args.get("task_id")
+    task = db.get(Task, int(task_id)) if str(task_id or "").isdigit() else None
+    if task is None:
+        raise NotFoundException(f"Task {task_id} não encontrada.")
+    errors = list(
+        db.scalars(select(TaskError).where(TaskError.task_id == task.id).order_by(TaskError.id.desc()).limit(10))
+    )
+    with_image = next((e for e in errors if e.error_screenshot), None)
+    base = {
+        "task_id": task.id,
+        "status": _status(task.status),
+        "automacao": _automation_name(task.automation),
+        "mensagem_final": (task.final_message or "")[:1500] or None,
+    }
+    if with_image is None:
+        base["print"] = None
+        base["aviso"] = (
+            "Esta task não tem print do erro. O robô tira o print quando usa o Maestro com "
+            "screenshot_on_error=True (ou chama maestro.screenshot())."
+        )
+        return base
+    image = _image_payload(with_image.error_screenshot)
+    if image is None:
+        base["print"] = None
+        base["aviso"] = "O print gravado está corrompido ou vazio."
+        return base
+    base["print"] = {"erro": with_image.message, "quando": _dt(with_image.created_at), "tamanho_bytes": image["bytes"], "tipo": image["mimeType"]}
+    base["_imagens"] = [{"data": image["data"], "mimeType": image["mimeType"]}]
+    return base
+
+
+def tela_da_maquina(db: Session, user: User, args: dict) -> dict:
+    """Último print da tela da máquina (o worker manda a cada poucos segundos enquanto roda task)."""
+    runner = _find_runner(db, args.get("maquina"))
+    base = _runner_state(runner, 0)
+    base["ultimo_print_em"] = _dt(runner.last_screenshot_at)
+    image = _image_payload(runner.last_screenshot_image)
+    if image is None:
+        base["print"] = None
+        base["aviso"] = "Esta máquina ainda não enviou print de tela (o worker só manda enquanto uma task roda)."
+        return base
+    age = None
+    if runner.last_screenshot_at:
+        age = int((datetime.now(UTC) - as_aware(runner.last_screenshot_at)).total_seconds())
+    base["print"] = {"idade_segundos": age, "tamanho_bytes": image["bytes"], "tipo": image["mimeType"]}
+    if age is not None and age > 600:
+        base["aviso"] = "O print tem mais de 10 minutos: pode não refletir a tela atual."
+    base["_imagens"] = [{"data": image["data"], "mimeType": image["mimeType"]}]
+    return base
 
 
 def listar_maquinas(db: Session, user: User, args: dict) -> dict:
@@ -547,6 +622,14 @@ TOOLS: list[Tool] = [
     Tool("detalhe_task", "Detalhe e erro de uma task",
          "Tudo sobre uma task: status, horários, versão do bot, mensagem final, erros registrados (com traceback) e os últimos logs.",
          _schema({"task_id": {"type": "integer"}, "limite": _LIMITE}, ["task_id"]), detalhe_task),
+    Tool("print_do_erro", "Print da tela no momento do erro",
+         "Devolve a imagem da tela no momento em que a task falhou (quando o robô tirou o print). Use depois de "
+         "detalhe_task quando tem_print_do_erro for true, para enxergar o que o robô via (ex.: tela do SAP).",
+         _schema({"task_id": {"type": "integer"}}, ["task_id"]), print_do_erro),
+    Tool("tela_da_maquina", "Tela da máquina agora",
+         "Devolve o último print da tela da máquina (o worker envia enquanto uma task roda). Serve para ver o que "
+         "está acontecendo numa máquina em execução ou travada.",
+         _schema({"maquina": _MAQUINA}, ["maquina"]), tela_da_maquina),
     Tool("listar_maquinas", "Listar máquinas",
          "Máquinas (runners) com status, se estão online (sinal recente), último sinal e quantas tasks estão rodando.",
          _schema({"incluir_inativas": {"type": "boolean"}}), listar_maquinas),

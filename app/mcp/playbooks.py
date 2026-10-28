@@ -42,6 +42,8 @@ Operação do dia a dia (menu Operação):
   start_date/end_date, automation_id, error_type). Logs completos: GET /api/v1/task-logs/task/{task_id}?limit=500.
 - Rodar agora: criar_task (usa os parâmetros padrão; 'parametros' sobrescreve). Só existe uma task aberta por
   automação: se já houver, o erro diz qual.
+- Ver a tela: print_do_erro(task_id) mostra a imagem do momento do erro; tela_da_maquina(maquina) mostra o
+  último print da máquina (enquanto roda task). As duas devolvem a imagem para a IA enxergar.
 - Acompanhar uma task: progress_current/progress_total/progress_text (etapa que o robô informou pelo Maestro),
   anexos em GET /api/v1/tasks/{id}/attachments (download em /attachments/{att_id}/download), print do erro em
   error_screenshot_base64 de GET /api/v1/task-errors/task/{id}.
@@ -167,7 +169,8 @@ Notificações de falha (menu Integração > Notificações; exige administrador
     "repositorios": """\
 Repositórios (áreas que agrupam bots, automações e credenciais):
 - Listar: GET /api/v1/repositories/. Criar: POST /api/v1/repositories/ com name (único) e description.
-- Alterar: PUT /api/v1/repositories/{id}. Desativar: DELETE /api/v1/repositories/{id} (lógico).
+- Alterar: PUT /api/v1/repositories/{id}. Desativar: DELETE /api/v1/repositories/{id} (lógico): desativa
+  junto todos os bots e automações do repositório. Reativar o repositório não reativa os bots/automações.
 """,
     "maestro": """\
 Maestro: a biblioteca que o robô importa para conversar com o orquestrador. É o padrão para TODO robô novo.

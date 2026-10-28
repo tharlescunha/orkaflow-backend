@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["MCP"])
 
 SUPPORTED_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
-SERVER_INFO = {"name": "orkaflow", "title": "OrkaFlow - orquestrador de robôs", "version": "1.1.0"}
+SERVER_INFO = {"name": "orkaflow", "title": "OrkaFlow - orquestrador de robôs", "version": "1.2.0"}
 INSTRUCTIONS = (
     "Ferramentas do OrkaFlow, o orquestrador de robôs RPA da ALZ Grãos. Você pode consultar e operar tudo que o "
     "painel faz (operação, máquinas, bots, versões, automações, agendamentos, variáveis, credenciais, notificações).\n"
@@ -45,7 +45,8 @@ INSTRUCTIONS = (
     "- Robô novo é sempre feito com a biblioteca Maestro (como_fazer('maestro')): main.py com "
     "`from maestro import Maestro`, `with maestro:` e success/fail; bot cadastrado com reads_task_file_arg=false. "
     "O jeito antigo (JSON por argumento, print, sys.exit) é só para robôs que já existem.\n"
-    "- Novidades de outubro/2026 (eventos, calendários, retentativa, Maestro...): como_fazer('novidades')."
+    "- Novidades de outubro/2026 (eventos, calendários, retentativa, Maestro...): como_fazer('novidades').\n"
+    "- Para enxergar telas: print_do_erro(task_id) e tela_da_maquina(maquina) devolvem imagem."
 )
 
 PARSE_ERROR = -32700
@@ -105,11 +106,20 @@ def _tool_error(message: str) -> dict:
 
 
 def _tool_result(data) -> dict:
+    # Ferramentas que devolvem imagem (print do erro, tela da máquina) põem a lista em `_imagens`:
+    # vira conteúdo de imagem do MCP (a IA da pessoa enxerga a tela) e sai do JSON de texto.
+    images: list[dict] = []
+    if isinstance(data, dict) and isinstance(data.get("_imagens"), list):
+        data = dict(data)
+        images = [img for img in data.pop("_imagens") if isinstance(img, dict) and img.get("data")]
     payload = jsonable_encoder(data)
     # chamar_api devolve ok=false quando a rota respondeu 4xx/5xx: a IA precisa ver como erro.
     failed = isinstance(payload, dict) and payload.get("ok") is False
+    content: list[dict] = [{"type": "text", "text": json.dumps(payload, ensure_ascii=False, indent=2)}]
+    for img in images:
+        content.append({"type": "image", "data": img["data"], "mimeType": img.get("mimeType") or "image/png"})
     return {
-        "content": [{"type": "text", "text": json.dumps(payload, ensure_ascii=False, indent=2)}],
+        "content": content,
         "structuredContent": payload if isinstance(payload, dict) else {"resultado": payload},
         "isError": failed,
     }
