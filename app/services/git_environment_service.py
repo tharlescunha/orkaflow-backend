@@ -28,27 +28,44 @@ EXPIRY_WARNING_DAYS = 15
 _SCHEME_RE = re.compile(r"(?i)^([a-z][a-z0-9+.-]*://)(.*)$")
 
 
-def url_has_credentials(url: str | None) -> bool:
-    """``https://user:token@host/...`` → True. Só olha a parte antes da primeira barra."""
-    if not url:
-        return False
-    match = _SCHEME_RE.match(url.strip())
+def split_url(url: str | None) -> tuple[str, str | None, str]:
+    """``https://user:tok@host/x`` → ('https://', 'user:tok', 'host/x'). Sem userinfo → (scheme, None, resto)."""
+    raw = (url or "").strip()
+    match = _SCHEME_RE.match(raw)
     if not match:
+        return "", None, raw
+    scheme, rest = match.group(1), match.group(2)
+    authority, _, path = rest.partition("/")
+    if "@" not in authority:
+        return scheme, None, rest
+    userinfo, _, host = authority.rpartition("@")
+    return scheme, userinfo, host + ("/" + path if path else "")
+
+
+def url_has_credentials(url: str | None) -> bool:
+    """True só com ``usuario:senha@`` (senha não vazia). O DevOps gera links ``https://alzgraos@dev.azure.com/...``,
+    com o usuário sozinho: isso NÃO é token, e o ambiente precisa completar."""
+    _, userinfo, _ = split_url(url)
+    if not userinfo or ":" not in userinfo:
         return False
-    authority = match.group(2).split("/", 1)[0]
-    return "@" in authority
+    return bool(userinfo.split(":", 1)[1])
+
+
+def strip_userinfo(url: str | None) -> str:
+    scheme, _, rest = split_url(url)
+    return f"{scheme}{rest}" if scheme else rest
 
 
 def normalize_prefix(value: str | None) -> str:
-    """Minúsculas, sem %20 e com barra no fim, para comparar prefixo com link sem surpresa."""
-    text = unquote((value or "").strip()).lower()
+    """Minúsculas, sem %20, sem usuário e com barra no fim, para comparar prefixo com link sem surpresa."""
+    text = unquote(strip_userinfo(value)).lower()
     if not text:
         return ""
     return text if text.endswith("/") else text + "/"
 
 
 def normalize_url_for_match(url: str | None) -> str:
-    return unquote((url or "").strip()).lower()
+    return unquote(strip_userinfo(url)).lower()
 
 
 def expiry_info(expires_at: datetime | None, now: datetime | None = None) -> tuple[str, int | None]:
@@ -187,11 +204,12 @@ class GitEnvironmentService:
             token = decrypt_credential_value(env.token_encrypted)
         except ValueError:
             return ResolvedUrl(url=raw, token_source="nenhum")
-        match = _SCHEME_RE.match(raw)
-        scheme, rest = match.group(1), match.group(2)
+        scheme, link_user, rest = split_url(raw)
+        # Usuário que já veio no link (ex.: alzgraos@ do DevOps) tem prioridade; senão o do ambiente; senão só o token.
+        username = (link_user.split(":", 1)[0] if link_user else "") or env.username or ""
         userinfo = quote(token, safe="")
-        if env.username:
-            userinfo = f"{quote(env.username, safe='')}:{userinfo}"
+        if username:
+            userinfo = f"{quote(username, safe='')}:{userinfo}"
         return ResolvedUrl(url=f"{scheme}{userinfo}@{rest}", token_source="ambiente", environment=env)
 
     def resolve_url(self, url: str | None) -> str | None:

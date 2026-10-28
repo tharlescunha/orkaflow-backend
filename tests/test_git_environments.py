@@ -88,8 +88,24 @@ class GitEnvironmentTests(unittest.TestCase):
         self.assertEqual(env.name, "DevOps ALZ")
         self.assertEqual(decrypt_credential_value(env.token_encrypted), "tok-1234-5678")
 
+    def test_devops_link_with_user_only_is_not_a_token_and_keeps_the_user(self):
+        # O DevOps gera "https://alzgraos@dev.azure.com/...": usuário sem senha.
+        link = "https://alzgraos@dev.azure.com/alzgraos/PPI%20-%20ALZ%20Gr%C3%A3os/_git/WEBHOOK-PROCESSOR"
+        self.assertFalse(url_has_credentials(link))
+        self.assertEqual(self.svc.check(link)["token_source"], "nenhum")
+        self._env("DevOps", "https://dev.azure.com/alzgraos/")
+        resolved = self.svc.resolve(link)
+        self.assertEqual(resolved.token_source, "ambiente")
+        self.assertTrue(resolved.url.startswith("https://alzgraos:tok-1234-5678@dev.azure.com/alzgraos/"))
+        # Com senha de verdade no link, fica como está.
+        full = "https://alzgraos:segredo@dev.azure.com/alzgraos/x/_git/y"
+        self.assertTrue(url_has_credentials(full))
+        self.assertEqual(self.svc.resolve(full).url, full)
+
     def test_helpers(self):
         self.assertTrue(url_has_credentials("https://a:b@host/x"))
+        self.assertFalse(url_has_credentials("https://a:@host/x"))
+        self.assertFalse(url_has_credentials("https://a@host/x"))
         self.assertFalse(url_has_credentials("https://host/x@y"))
         self.assertEqual(normalize_prefix("https://dev.azure.com/alzgraos/PPI%20-%20ALZ"), "https://dev.azure.com/alzgraos/ppi - alz/")
 
