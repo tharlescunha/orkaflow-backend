@@ -22,6 +22,9 @@ class User(Base, BaseModelMixin, TimestampMixin):
         default=UserRole.VIEWER,
     )
 
+    # Quem quer ver a tela Sync liga no próprio perfil; para os demais o menu nem aparece.
+    sync_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+
     profile_id: Mapped[int | None] = mapped_column(
         ForeignKey("profiles.id", ondelete="SET NULL"),
         nullable=True,

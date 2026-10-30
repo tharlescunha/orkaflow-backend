@@ -38,6 +38,7 @@ from app.api.v1.env_variables import router as env_variables_router
 from app.api.v1.runner_logs import router as runner_logs_router
 from app.api.v1.integration import router as integration_router
 from app.api.v1.settings import router as settings_router
+from app.api.v1.sync import router as sync_router
 from app.api.v1.api_tokens import admin_router as user_api_tokens_router
 from app.api.v1.api_tokens import router as api_tokens_router
 from app.api.v1.worker_runner_logs import router as worker_runner_logs_router
@@ -83,6 +84,7 @@ protected_router.include_router(env_variables_router)
 protected_router.include_router(runner_logs_router)
 protected_router.include_router(integration_router)
 protected_router.include_router(settings_router)
+protected_router.include_router(sync_router)
 protected_router.include_router(api_tokens_router)
 protected_router.include_router(user_api_tokens_router)
 

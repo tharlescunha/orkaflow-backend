@@ -17,6 +17,7 @@ from app.services import event_service, retry_service
 from app.services.credential_health_service import CredentialHealthService
 from app.services.git_environment_service import GitEnvironmentService
 from app.services.task_events import add_task_log
+from app.services.worker_release_service import update_request_id
 from app.core.security import (
     decrypt_credential_value,
     generate_runner_token,
@@ -469,6 +470,7 @@ class WorkerService:
         os_user = (getattr(payload, "os_user", None) or "").strip()[:150]
         if os_user and runner.os_user != os_user:
             runner.os_user = os_user
+        self._record_worker_version(runner, payload)
         self._mark_alive(runner, reason="heartbeat")
         self._refresh_runner_status(runner, reason="heartbeat")
 
@@ -485,7 +487,25 @@ class WorkerService:
             status=runner.status,
             server_time=datetime.now(UTC),
             running_tasks=payload.running_tasks,
+            update_requested=runner.worker_update_requested_at is not None,
+            update_request_id=update_request_id(runner.worker_update_requested_at),
         )
+
+    @staticmethod
+    def _record_worker_version(runner, payload) -> None:
+        """Guarda a versão que o worker informou; commit novo = o pedido de atualização foi atendido."""
+        commit = (getattr(payload, "worker_commit", None) or "").strip().lower()[:40]
+        version = (getattr(payload, "worker_version", None) or "").strip()[:30]
+        if version and runner.worker_version != version:
+            runner.worker_version = version
+        if commit and runner.worker_commit != commit:
+            if runner.worker_commit is not None:
+                runner.worker_update_requested_at = None
+            runner.worker_commit = commit
+        ack = (getattr(payload, "update_ack", None) or "").strip()
+        requested = runner.worker_update_requested_at
+        if ack and requested is not None and ack == update_request_id(requested):
+            runner.worker_update_requested_at = None
 
     def sync_runner(self, payload: WorkerSyncRequest) -> WorkerSyncResponse:
         runner = self._authenticate_runner(payload.uuid, payload.token)

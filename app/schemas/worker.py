@@ -51,6 +51,11 @@ class WorkerHeartbeatRequest(OrkaBaseSchema):
     running_tasks: int = 0
     # Usuário do Windows em que o worker roda (DOMINIO\usuario). Opcional: worker antigo não manda.
     os_user: str | None = None
+    # Versão do worker (commit do Git e número). Opcional: worker antigo não manda.
+    worker_commit: str | None = None
+    worker_version: str | None = None
+    # Código do último pedido de atualização que este worker atendeu (reiniciou por causa dele).
+    update_ack: str | None = None
 
 
 class WorkerHeartbeatResponse(OrkaBaseSchema):
@@ -59,6 +64,10 @@ class WorkerHeartbeatResponse(OrkaBaseSchema):
     status: RunnerStatus
     server_time: datetime
     running_tasks: int = 0
+    # O painel pediu atualização: o worker, ocioso, sai e o launcher baixa o código e reabre.
+    update_requested: bool = False
+    # Identifica o pedido (o worker confirma de volta em update_ack depois de reiniciar).
+    update_request_id: str | None = None
 
 
 class WorkerScreenshotUploadRequest(OrkaBaseSchema):

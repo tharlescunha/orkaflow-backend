@@ -2119,6 +2119,85 @@ GUIDE.update({
         "example_request": {"url": "https://dev.azure.com/alzgraos/PPI%20-%20ALZ%20Gr%C3%A3os/_git/RPA_INSUMOS_APROV_OV"},
         "example_response": {"token_source": "ambiente", "environment_id": 1, "environment_name": "DevOps · ALZ Grãos", "expiry_status": "valido", "days_to_expire": 180, "message": "Sem token no link: vai usar o token do ambiente DevOps · ALZ Grãos."},
     },
+    "GET /api/v1/settings/workers": {
+        "summary": "Versão publicada do worker e versão de cada máquina",
+        "description": (
+            "Aba Works de Configurações. Traz o link do repositório do worker, o commit publicado na `main` "
+            "(`latest_commit`, preenchido por `POST /settings/workers/check`) e, por máquina, o commit em que o "
+            "worker roda (`worker_commit`, informado no heartbeat), `up_to_date` (null = sem informação) e o pedido "
+            "de atualização em andamento (`update_requested_at`).\n\n" + _ADMIN
+        ),
+        "example_response": {"repo_url": "https://github.com/tharlescunha/worker-url.git", "branch": "main", "latest_commit": "b6d65fda" + "0" * 32, "latest_checked_at": "2026-10-30T14:40:00+00:00", "latest_error": None, "runners": [{"id": 48, "name": "SRVPMW01RPA14", "label": None, "status": "online", "enabled": True, "last_heartbeat": "2026-10-30T14:40:39Z", "worker_commit": "b6d65fd", "worker_version": "0.3.0", "up_to_date": True, "update_requested_at": None, "update_request_stale": False}]},
+    },
+    "PUT /api/v1/settings/workers": {
+        "summary": "Salva o link do repositório do worker",
+        "description": "Campo `repo_url`. Sem token dentro do link: o token vem dos ambientes de Git. Link novo limpa o commit publicado.\n\n" + _ADMIN,
+        "example_request": {"repo_url": "https://github.com/tharlescunha/worker-url.git"},
+        "example_response": {"repo_url": "https://github.com/tharlescunha/worker-url.git", "branch": "main", "latest_commit": "b6d65fda" + "0" * 32, "latest_checked_at": "2026-10-30T14:40:00+00:00", "latest_error": None, "runners": [{"id": 48, "name": "SRVPMW01RPA14", "label": None, "status": "online", "enabled": True, "last_heartbeat": "2026-10-30T14:40:39Z", "worker_commit": "b6d65fd", "worker_version": "0.3.0", "up_to_date": True, "update_requested_at": None, "update_request_stale": False}]},
+    },
+    "POST /api/v1/settings/workers/check": {
+        "summary": "Consulta o Git e guarda o commit publicado",
+        "description": "Roda `git ls-remote` na branch `main` do link salvo, com o token do ambiente que cobre o endereço. Erro do Git volta em `latest_error`.\n\n" + _ADMIN,
+        "example_response": {"repo_url": "https://github.com/tharlescunha/worker-url.git", "branch": "main", "latest_commit": "b6d65fda" + "0" * 32, "latest_checked_at": "2026-10-30T14:40:00+00:00", "latest_error": None, "runners": [{"id": 48, "name": "SRVPMW01RPA14", "label": None, "status": "online", "enabled": True, "last_heartbeat": "2026-10-30T14:40:39Z", "worker_commit": "b6d65fd", "worker_version": "0.3.0", "up_to_date": True, "update_requested_at": None, "update_request_stale": False}]},
+    },
+    "POST /api/v1/settings/workers/update": {
+        "summary": "Pede atualização dos workers",
+        "description": (
+            "Corpo `runner_ids` (vazio = todas as máquinas ativas). Cada worker recebe o pedido no heartbeat, para de "
+            "pegar tasks novas, espera as atuais terminarem e sai; o launcher baixa o código novo (git fetch + reset) e "
+            "abre de novo. Máquina com o worker fechado atualiza quando voltar.\n\n" + _ADMIN
+        ),
+        "example_request": {"runner_ids": [48]},
+        "example_response": {"requested": 1},
+    },
+    "DELETE /api/v1/settings/workers/update/{runner_id}": {
+        "summary": "Cancela o pedido de atualização de uma máquina",
+        "description": "Só vale enquanto o worker ainda não saiu para atualizar.\n\n" + _ADMIN,
+        "example_response": {"message": "Pedido cancelado."},
+    },
+    "PUT /api/v1/sync/preference": {
+        "summary": "Liga ou desliga o Sync no perfil de quem chama",
+        "description": "Campo `sync_enabled`. Vale só para o usuário logado; desligado, o menu Sync não aparece e as rotas de /sync respondem 403.\n\n" + _BEARER,
+        "example_request": {"sync_enabled": True},
+        "example_response": {"sync_enabled": True},
+    },
+    "GET /api/v1/sync/state": {
+        "summary": "Automações escolhidas e sistemas externos do Sync",
+        "description": "Dados pessoais de quem chama. Exige o Sync ligado no perfil.\n\n" + _BEARER,
+        "example_response": {"automation_ids": [49, 44], "checks": [{"id": 1, "name": "API de Insumos", "url": "https://insumos.exemplo.com/health", "server": "Azure", "project": "Insumos", "interval_seconds": 60, "expected_status": None, "timeout_seconds": 10, "active": True, "last_ping_at": "2026-10-30T14:40:39Z", "last_ok": True, "last_status_code": 200, "last_latency_ms": 85, "last_error": None}]},
+    },
+    "PUT /api/v1/sync/picks": {
+        "summary": "Escolhe as automações que aparecem no Sync",
+        "description": "Campo `automation_ids` substitui a escolha anterior; ids inexistentes são ignorados.\n\n" + _BEARER,
+        "example_request": {"automation_ids": [49, 44]},
+        "example_response": {"automation_ids": [49, 44]},
+    },
+    "POST /api/v1/sync/checks": {
+        "summary": "Adiciona um sistema de fora para acompanhar",
+        "description": (
+            "Campos: `name`, `url` (http/https, sem usuário/senha; loopback e link-local são barrados), `server` e "
+            "`project` (texto livre), `interval_seconds` (15 a 3600), `expected_status` (vazio = abaixo de 400), "
+            "`timeout_seconds` e `active`. O teste só roda quando a tela Sync aberta pede.\n\n" + _BEARER
+        ),
+        "example_request": {"name": "API de Insumos", "url": "https://insumos.exemplo.com/health", "server": "Azure", "project": "Insumos", "interval_seconds": 60, "expected_status": None, "timeout_seconds": 10, "active": True},
+        "example_response": {"id": 1, "name": "API de Insumos", "url": "https://insumos.exemplo.com/health", "server": "Azure", "project": "Insumos", "interval_seconds": 60, "expected_status": None, "timeout_seconds": 10, "active": True, "last_ping_at": "2026-10-30T14:40:39Z", "last_ok": True, "last_status_code": 200, "last_latency_ms": 85, "last_error": None},
+    },
+    "PUT /api/v1/sync/checks/{check_id}": {
+        "summary": "Altera um sistema do Sync",
+        "description": "Mesmos campos do POST. Só o dono enxerga e altera.\n\n" + _BEARER,
+        "example_request": {"name": "API de Insumos", "url": "https://insumos.exemplo.com/health", "server": "Azure", "project": "Insumos", "interval_seconds": 120, "expected_status": 200, "timeout_seconds": 10, "active": True},
+        "example_response": {"id": 1, "name": "API de Insumos", "url": "https://insumos.exemplo.com/health", "server": "Azure", "project": "Insumos", "interval_seconds": 60, "expected_status": None, "timeout_seconds": 10, "active": True, "last_ping_at": "2026-10-30T14:40:39Z", "last_ok": True, "last_status_code": 200, "last_latency_ms": 85, "last_error": None},
+    },
+    "DELETE /api/v1/sync/checks/{check_id}": {
+        "summary": "Remove um sistema do Sync",
+        "description": _BEARER,
+        "example_response": {"message": "Sistema removido."},
+    },
+    "POST /api/v1/sync/checks/{check_id}/ping": {
+        "summary": "Testa o endereço de um sistema agora",
+        "description": "O backend faz um GET no endereço e grava `last_ok`, `last_status_code`, `last_latency_ms` e `last_error`. A tela Sync aberta chama isto no intervalo de cada sistema.\n\n" + _BEARER,
+        "example_response": {"id": 1, "name": "API de Insumos", "url": "https://insumos.exemplo.com/health", "server": "Azure", "project": "Insumos", "interval_seconds": 60, "expected_status": None, "timeout_seconds": 10, "active": True, "last_ping_at": "2026-10-30T14:40:39Z", "last_ok": True, "last_status_code": 200, "last_latency_ms": 85, "last_error": None},
+    },
     "GET /api/v1/events/rules": {
         "summary": "Lista as regras de evento",
         "description": "Query opcional `active`. Cada regra traz o escopo, o gatilho, as etapas prévias e o envio principal.\n\n" + _BEARER,

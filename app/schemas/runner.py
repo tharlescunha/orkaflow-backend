@@ -101,5 +101,7 @@ class RunnerListItem(OrkaBaseSchema):
     ip: str | None = None
     login_user: str | None = None
     os_user: str | None = None
+    worker_commit: str | None = None
+    worker_version: str | None = None
     last_heartbeat: datetime | None = None
     

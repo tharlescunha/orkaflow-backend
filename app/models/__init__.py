@@ -35,6 +35,8 @@ from app.models.env_variable import EnvVariable
 from app.models.runner_log_line import RunnerLogLine
 from app.models.api_token import ApiToken
 from app.models.git_environment import GitEnvironment
+from app.models.sync_check import SyncAutomationPick, SyncCheck
+from app.models.system_setting import SystemSetting
 
 
 __all__ = [

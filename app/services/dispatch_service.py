@@ -2,7 +2,7 @@ import logging
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session, selectinload
 
 from app.domain.enums import RunnerStatus, TaskLogLevel, TaskLogSource, TaskStatus
@@ -128,11 +128,23 @@ class DispatchService:
                 key=lambda r: (self._load(r.id, executing, pinned), r.id),
             )
 
-            task.waiting_reason = None
-            task.runner_id = runner.id
-            task.last_update_at = datetime.now(UTC)
-            task.dispatch_attempts = (task.dispatch_attempts or 0) + 1
-            self.db.add(task)
+            # Gravação condicional: entre a leitura acima e agora o worker pode ter assumido a task (claim).
+            # Escrever às cegas sobrescrevia runner, tentativas e última atualização de uma task já em andamento.
+            pinned_now = self.db.execute(
+                update(Task)
+                .where(Task.id == task.id)
+                .where(Task.status == TaskStatus.WAITING)
+                .where(Task.runner_id.is_(None))
+                .values(
+                    waiting_reason=None,
+                    runner_id=runner.id,
+                    last_update_at=datetime.now(UTC),
+                    dispatch_attempts=func.coalesce(Task.dispatch_attempts, 0) + 1,
+                )
+                .execution_options(synchronize_session=False)
+            )
+            if pinned_now.rowcount != 1:
+                continue
             add_task_log(
                 self.db,
                 task.id,

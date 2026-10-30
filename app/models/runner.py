@@ -49,6 +49,11 @@ class Runner(Base, BaseModelMixin, TimestampMixin):
     # worker está rodando (informado pelo próprio worker no heartbeat). Out/2026.
     login_user: Mapped[str | None] = mapped_column(String(150), nullable=True)
     os_user: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    # Versão do worker na máquina (commit do Git e número), informada no heartbeat; e o pedido de atualização
+    # feito pelo painel (limpo quando o worker volta rodando outro commit). Out/2026.
+    worker_commit: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    worker_version: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    worker_update_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
 
     # Runner removido pelo administrador: some das listagens e não executa mais nada.

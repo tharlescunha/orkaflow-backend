@@ -76,6 +76,7 @@ class UserRead(OrkaBaseSchema):
     role: str
     profile_id: int | None = None
     profile: UserProfileRead | None = None
+    sync_enabled: bool = False
     created_at: datetime
     updated_at: datetime | None = None
 
