@@ -5,6 +5,7 @@ O watchdog só:
 - marca runner OFFLINE quando o heartbeat para (sem tocar nas tasks nem nos locks);
 - finaliza task por timeout REAL (started_at + timeout + margem) ou inatividade configurada;
 - finaliza task READY que nunca virou RUNNING (claim abandonado);
+- finaliza task RUNNING sem nenhum sinal do worker após o início (worker travou ao iniciar);
 - desfaz pré-vínculo de task WAITING em runner indisponível;
 - registra TaskLog warning (uma vez) quando algo está estranho, sem mudar o estado.
 
@@ -20,12 +21,14 @@ from app.domain.enums import ErrorCategory, RunnerStatus, TaskLogLevel, TaskLogS
 from app.models.runner import Runner
 from app.models.runner_config import RunnerConfig
 from app.models.task import Task
+from app.models.task_log import TaskLog
 from app.repositories.lock_repository import LockRepository
 from app.services import event_service, retry_service
 from app.services.capacity_service import CapacityService
 from app.services.task_events import add_task_error, add_task_log, add_task_log_once
 from app.services.task_rules import (
     EXECUTING_STATUSES,
+    NO_WORKER_SIGNAL_SECONDS,
     RUNNER_OFFLINE_AFTER_SECONDS,
     STALE_READY_CLAIM_SECONDS,
     TASK_TIMEOUT_MARGIN_SECONDS,
@@ -154,6 +157,26 @@ class WatchdogService:
     # ------------------------------------------------------------------
     # timeouts
     # ------------------------------------------------------------------
+    def _worker_went_silent(self, task: Task, started_at: datetime, now: datetime) -> bool:
+        """RUNNING há mais de NO_WORKER_SIGNAL_SECONDS sem log do worker/robô nem progresso.
+
+        Sinal de vida = qualquer TaskLog de origem worker, ou last_update_at bem depois do
+        início (etapa/progresso do robô). Só o "iniciada" do próprio worker não conta.
+        """
+        if now - started_at <= timedelta(seconds=NO_WORKER_SIGNAL_SECONDS):
+            return False
+
+        last_update = as_aware(task.last_update_at)
+        if last_update is not None and last_update > started_at + timedelta(seconds=15):
+            return False
+
+        worker_logs = self.db.execute(
+            select(func.count(TaskLog.id))
+            .where(TaskLog.task_id == task.id)
+            .where(TaskLog.source == TaskLogSource.WORKER)
+        ).scalar_one()
+        return int(worker_logs or 0) == 0
+
     def mark_timed_out_tasks(self) -> int:
         """Finaliza tasks por timeout real, inatividade configurada ou claim abandonado.
 
@@ -190,6 +213,23 @@ class WatchdogService:
                         code="TASK_TIMEOUT",
                         category=ErrorCategory.TIMEOUT,
                         stop_requested=True,
+                    )
+                    total += 1
+                    continue
+
+                if task.status == TaskStatus.RUNNING and self._worker_went_silent(task, started_at, now):
+                    self._finalize_task(
+                        task,
+                        status=TaskStatus.ERROR,
+                        now=now,
+                        message=(
+                            f"A task foi marcada como iniciada, mas o worker não deu nenhum sinal em "
+                            f"{NO_WORKER_SIGNAL_SECONDS // 60} minutos (nenhum log, etapa ou telemetria). "
+                            "O robô provavelmente não chegou a rodar; finalizada pelo watchdog."
+                        ),
+                        error_type="WorkerNoSignal",
+                        code="TASK_WORKER_NO_SIGNAL",
+                        category=ErrorCategory.TECHNICAL,
                     )
                     total += 1
                     continue

@@ -10,6 +10,10 @@ TASK_TIMEOUT_MARGIN_SECONDS = 120
 # Task READY (claim feito) que nunca chegou a RUNNING e ficou parada.
 STALE_READY_CLAIM_SECONDS = 30 * 60
 
+# Task RUNNING sem nenhum sinal do worker (log do worker/robô ou progresso) depois do início:
+# o worker avisou "iniciada" mas travou antes de executar. Não precisa esperar o timeout inteiro.
+NO_WORKER_SIGNAL_SECONDS = 180
+
 # Task WAITING pré-vinculada a runner indisponível: desfaz vínculo após esse tempo.
 WAITING_UNLINK_AFTER_SECONDS = 5 * 60
 

@@ -18,6 +18,8 @@ from app.domain.enums import (
     BotSourceType,
     BotTechnology,
     RunnerStatus,
+    TaskLogLevel,
+    TaskLogSource,
     TaskStatus,
     UserRole,
 )
@@ -31,6 +33,7 @@ from app.models.repository import Repository
 from app.models.runner import Runner
 from app.models.runner_config import RunnerConfig
 from app.models.task import Task
+from app.models.task_log import TaskLog
 from app.models.user import User
 from app.services.capacity_service import CapacityService
 from app.services.watchdog_service import WatchdogService
@@ -210,8 +213,8 @@ class WatchdogTests(unittest.TestCase):
         self.f = Fixture()
         self.wd = WatchdogService(self.f.db)
 
-    def _running(self, **kw):
-        r = self.f.runner()
+    def _running(self, runner_name="r1", **kw):
+        r = self.f.runner(name=runner_name)
         auto, ver = self.f.automation(runners=[r])
         t = self.f.task(auto, ver, TaskStatus.RUNNING, runner=r, **kw)
         return r, t
@@ -237,7 +240,9 @@ class WatchdogTests(unittest.TestCase):
 
     def test_timeout_needs_margin_and_sets_stop(self):
         now = datetime.now(UTC)
-        _, inside = self._running(started_at=now - timedelta(seconds=3600 + 60), timeout_seconds=3600)
+        _, inside = self._running(
+            started_at=now - timedelta(seconds=3600 + 60), last_update_at=now, timeout_seconds=3600
+        )
         self.assertEqual(self.wd.mark_timed_out_tasks(), 0)
         inside.started_at = now - timedelta(seconds=3600 + 200)
         self.assertEqual(self.wd.mark_timed_out_tasks(), 1)
@@ -256,6 +261,28 @@ class WatchdogTests(unittest.TestCase):
         self.f.db.refresh(t)
         self.assertEqual(t.status, TaskStatus.TIMEOUT)
         self.assertFalse(t.stop_requested)
+
+    def test_running_sem_sinal_do_worker_vira_erro_cedo(self):
+        now = datetime.now(UTC)
+        started = now - timedelta(minutes=4)
+        _, t = self._running(started_at=started, last_update_at=started, timeout_seconds=3600)
+        self.assertEqual(self.wd.mark_timed_out_tasks(), 1)
+        self.f.db.refresh(t)
+        self.assertEqual(t.status, TaskStatus.ERROR)
+        self.assertFalse(t.stop_requested)
+        self.assertIn("worker não deu nenhum sinal", t.final_message or "")
+
+    def test_running_recente_ou_com_sinal_nao_e_encerrada(self):
+        now = datetime.now(UTC)
+        _, recente = self._running("ra", started_at=now - timedelta(minutes=2), last_update_at=now - timedelta(minutes=2))
+        _, com_log = self._running("rb", started_at=now - timedelta(minutes=4), last_update_at=now - timedelta(minutes=4))
+        _, com_etapa = self._running("rc", started_at=now - timedelta(minutes=4), last_update_at=now - timedelta(minutes=1))
+        self.f.db.add(TaskLog(task_id=com_log.id, level=TaskLogLevel.INFO, message="x", source=TaskLogSource.WORKER))
+        self.f.db.commit()
+        self.assertEqual(self.wd.mark_timed_out_tasks(), 0)
+        for t in (recente, com_log, com_etapa):
+            self.f.db.refresh(t)
+            self.assertEqual(t.status, TaskStatus.RUNNING)
 
     def test_stale_ready_becomes_error_without_stop(self):
         r = self.f.runner()
