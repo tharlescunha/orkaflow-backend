@@ -65,6 +65,9 @@ class Settings(BaseSettings):
 
     # Servidor MCP (POST /mcp) para IAs, autenticado com token de integração.
     enable_mcp: bool = Field(True, alias="ENABLE_MCP")
+    # Database Status (monitoramento dos bancos Azure SQL). Desligado por padrão: só liga onde o servidor tem
+    # identidade com acesso de leitura aos bancos (App Service). Ver app/dbstatus/service.py.
+    dbstatus_enabled: bool = Field(False, alias="DBSTATUS_ENABLED")
     # Endereço público do backend mostrado na tela do MCP (ex.: https://orkaflow.empresa.com.br). Vazio = automático.
     public_api_url: str | None = Field(None, alias="PUBLIC_API_URL")
     health_check_background_workers: bool = Field(True, alias="HEALTH_CHECK_BACKGROUND_WORKERS")

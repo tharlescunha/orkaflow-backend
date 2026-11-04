@@ -2225,6 +2225,17 @@ GUIDE.update({
         "description": "O backend faz um GET no endereço e grava `last_ok`, `last_status_code`, `last_latency_ms` e `last_error`. A tela Sync aberta chama isto no intervalo de cada sistema.\n\n" + _BEARER,
         "example_response": {"id": 1, "name": "API de Insumos", "url": "https://insumos.exemplo.com/health", "server": "Azure", "project": "Insumos", "interval_seconds": 60, "expected_status": None, "timeout_seconds": 10, "active": True, "last_ping_at": "2026-10-30T14:40:39Z", "last_ok": True, "last_status_code": 200, "last_latency_ms": 85, "last_error": None},
     },
+    "GET /api/v1/dbstatus/{route}": {
+        "summary": "Database Status: monitoramento dos bancos Azure SQL (somente leitura)",
+        "description": (
+            "Painel de saúde dos bancos Azure SQL (DTU, travamentos, consultas pesadas, usuários e esquemas, capacidade). "
+            "`route` é uma de: `databases`, `overview` (`range`=live|24h|7d|15d|30d), `snapshot`, `db` (`s`, `d`, `range`), "
+            "`db/live`, `db/queries` (`hours` ou `from`+`to`, `sort`), `db/extra`, `db/events` (`days`), `db/usage` e "
+            "`db/schemas`. O servidor usa a identidade gerenciada do app para ler o Azure Monitor e os bancos; nenhuma "
+            "alteração é feita neles. Responde 503 quando `DBSTATUS_ENABLED` está desligado.\n\n" + _ADMIN
+        ),
+        "example_response": {"servers": ["alzbdsqlbi"], "databases": [{"server": "alzbdsqlbi", "name": "DW-ALZ", "sku": "Standard"}]},
+    },
     "GET /api/v1/events/rules": {
         "summary": "Lista as regras de evento",
         "description": "Query opcional `active`. Cada regra traz o escopo, o gatilho, as etapas prévias e o envio principal.\n\n" + _BEARER,

@@ -23,6 +23,7 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     seed_default_permissions()
+    start_dbstatus()
     yield
 
 
@@ -48,6 +49,21 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ==========================================================
+# DATABASE STATUS (só onde está ligado)
+# ==========================================================
+def start_dbstatus() -> None:
+    if not settings.dbstatus_enabled:
+        return
+    try:
+        from app.dbstatus import service
+
+        if service.start():
+            logger.info("Database Status ligado (coletor de uso em segundo plano).")
+    except Exception as e:  # nunca derruba a API por causa do monitoramento
+        logger.exception(f"Erro ao ligar o Database Status: {e}")
+
 
 # ==========================================================
 # SEED DE PERMISSÕES
