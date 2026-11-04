@@ -83,6 +83,49 @@ class HourlyLoadTests(unittest.TestCase):
         total_minutos = sum(h.avg_busy_minutes for h in data.hours) * data.days
         self.assertLessEqual(total_minutos, 24 * 60 + 10)  # folga: arredondamento por hora
 
+    # ---------------------------------------------------------------- 24 h: janela deslizante como o gráfico do topo
+    def test_24h_e_cronologico_de_ontem_nesta_hora_ate_agora(self):
+        agora = datetime.now(UTC)
+        self._task(self.r1, agora - timedelta(hours=2), 20)
+        self._task(self.r1, agora - timedelta(hours=23, minutes=30), 10)
+        data = self.svc.get_hourly_load(period="1d")
+
+        agora_local = agora.astimezone(BRT)
+        titulos = [h.title for h in data.hours]
+        # Primeira barra é a hora de 24 h atrás (ontem) e a última é a hora atual (hoje).
+        self.assertTrue(titulos[0].startswith("ontem"))
+        self.assertEqual(titulos[-1], f"hoje {agora_local.hour:02d}h")
+        self.assertIn(len(data.hours), (24, 25))
+        # Mesma ordem do gráfico de execuções do topo: horas reais seguidas, sem repetir chave.
+        self.assertEqual(len({h.key for h in data.hours}), len(data.hours))
+        self.assertEqual(sum(h.tasks for h in data.hours), 2)
+        self.assertEqual(data.days, 1)
+
+    def test_24h_hora_repetida_nas_pontas_nao_se_mistura(self):
+        agora = datetime.now(UTC)
+        self._task(self.r1, agora - timedelta(minutes=5), 1)
+        data = self.svc.get_hourly_load(period="1d")
+        agora_local = agora.astimezone(BRT)
+        mesma_hora = [h for h in data.hours if h.hour == agora_local.hour]
+        # A hora de agora aparece ontem (ponta parcial) e hoje, em barras separadas.
+        self.assertEqual(len(mesma_hora), 2 if agora_local.minute > 0 or len(data.hours) == 25 else 1)
+        self.assertEqual(sum(h.tasks for h in mesma_hora), 1)
+        self.assertEqual(data.hours[-1].tasks, 1)
+
+    def test_24h_por_maquina_usa_as_mesmas_barras(self):
+        agora = datetime.now(UTC)
+        self._task(self.r2, agora - timedelta(hours=5), 15)
+        data = self.svc.get_hourly_load(period="1d")
+        r2 = next(r for r in data.runners if r.name == "r2")
+        self.assertEqual([h.key for h in r2.hours], [h.key for h in data.hours])
+        self.assertEqual(sum(h.tasks for h in r2.hours), 1)
+
+    def test_7d_continua_por_hora_do_dia(self):
+        self._task(self.r1, ontem_as(9, 0), 10)
+        data = self.svc.get_hourly_load(period="7d")
+        self.assertEqual(len(data.hours), 24)
+        self.assertEqual([h.title for h in data.hours][:2], ["00h", "01h"])
+
 
 if __name__ == "__main__":
     unittest.main()

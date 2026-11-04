@@ -32,38 +32,75 @@ MAX_TASK_SPAN = timedelta(hours=24)
 OPEN_STATUSES = {"running", "stop_requested"}
 
 
-def _hourly_buckets(tasks: list[tuple], now: datetime, days: int) -> list[DashboardHourlyLoadHour]:
-    """24 horas do dia (Brasília): quantas tasks começaram e quantos minutos houve task rodando."""
-    counts = [0] * 24
-    busy_seconds = [0.0] * 24
+def _hourly_buckets(
+    tasks: list[tuple], now: datetime, days: int, *, rolling_from: datetime | None = None
+) -> list[DashboardHourlyLoadHour]:
+    """Barras da carga por hora (horário de Brasília): quantas tasks começaram e quantos minutos houve task rodando.
+
+    Sem ``rolling_from``: 24 barras, uma por hora do dia, somando todos os dias do período.
+    Com ``rolling_from`` (período 24 h): uma barra por hora real, da hora de ``rolling_from`` até agora, em ordem
+    cronológica, como o gráfico de execuções do topo (as pontas são parciais).
+    """
+    now_local = now.astimezone(BRT)
+
+    if rolling_from is None:
+        keys = [f"{hour:02d}" for hour in range(24)]
+        titles = {key: f"{key}h" for key in keys}
+        hours_of = {key: int(key) for key in keys}
+
+        def bucket_key(moment: datetime) -> str:
+            return f"{moment.hour:02d}"
+
+    else:
+        cursor = rolling_from.astimezone(BRT).replace(minute=0, second=0, microsecond=0)
+        keys, titles, hours_of = [], {}, {}
+        while cursor <= now_local:
+            key = cursor.strftime("%Y-%m-%dT%H")
+            keys.append(key)
+            day = "hoje" if cursor.date() == now_local.date() else "ontem"
+            titles[key] = f"{day} {cursor.hour:02d}h"
+            hours_of[key] = cursor.hour
+            cursor += timedelta(hours=1)
+
+        def bucket_key(moment: datetime) -> str:
+            return moment.strftime("%Y-%m-%dT%H")
+
+    counts = {key: 0 for key in keys}
+    busy_seconds = {key: 0.0 for key in keys}
 
     for _runner_id, started_at, finished_at, status in tasks:
         start = _aw(started_at).astimezone(BRT)
         if finished_at is not None:
             end = _aw(finished_at).astimezone(BRT)
         elif str(getattr(status, "value", status)) in OPEN_STATUSES:
-            end = now.astimezone(BRT)
+            end = now_local
         else:
             end = start
         end = min(end, start + MAX_TASK_SPAN)
 
-        counts[start.hour] += 1
+        start_key = bucket_key(start)
+        if start_key in counts:
+            counts[start_key] += 1
 
         cursor = start
         while cursor < end:
             hour_end = cursor.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
             segment_end = min(hour_end, end)
-            busy_seconds[cursor.hour] += (segment_end - cursor).total_seconds()
+            seg_key = bucket_key(cursor)
+            if seg_key in busy_seconds:
+                busy_seconds[seg_key] += (segment_end - cursor).total_seconds()
             cursor = segment_end
 
     return [
         DashboardHourlyLoadHour(
-            hour=hour,
-            tasks=counts[hour],
-            avg_tasks_per_day=round(counts[hour] / days, 2),
-            avg_busy_minutes=round(busy_seconds[hour] / 60 / days, 1),
+            hour=hours_of[key],
+            key=key,
+            title=titles[key],
+            tasks=counts[key],
+            avg_tasks_per_day=round(counts[key] / days, 2),
+            avg_busy_minutes=round(busy_seconds[key] / 60 / days, 1),
         )
-        for hour in range(24)
+        for key in keys
     ]
 
 
@@ -428,6 +465,8 @@ class DashboardService:
             bot_id=bot_id,
         )
         now = datetime.now(UTC)
+        # 24 h: janela deslizante (de ontem nesta hora até agora), igual ao gráfico de execuções do topo.
+        rolling_from = date_from if period == "1d" else None
 
         by_runner: dict[int | None, list[tuple]] = defaultdict(list)
         for row in rows:
@@ -443,7 +482,7 @@ class DashboardService:
                 name=runner.name,
                 label=runner.label,
                 total_tasks=len(by_runner.get(runner.id, [])),
-                hours=_hourly_buckets(by_runner.get(runner.id, []), now, days),
+                hours=_hourly_buckets(by_runner.get(runner.id, []), now, days, rolling_from=rolling_from),
             )
             for runner in runners
         ]
@@ -454,6 +493,6 @@ class DashboardService:
             days=days,
             date_from=date_from,
             date_to=date_to,
-            hours=_hourly_buckets(rows, now, days),
+            hours=_hourly_buckets(rows, now, days, rolling_from=rolling_from),
             runners=runner_items,
         )

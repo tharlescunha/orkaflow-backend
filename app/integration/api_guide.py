@@ -2038,7 +2038,7 @@ GUIDE.update({
             "período e devolve as 24 horas do dia em **horário de Brasília**: `tasks` (quantas começaram naquela hora, "
             "somando os dias), `avg_tasks_per_day` e `avg_busy_minutes` (minutos com task rodando dentro da hora, em "
             "média por dia; passa de 60 quando há tasks simultâneas). `hours` é o geral; `runners` traz o mesmo por "
-            "máquina, inclusive as sem nenhuma task (zeradas). Task rodando há mais de 24 h conta no máximo 24 h.\n\n"
+            "máquina, inclusive as sem nenhuma task (zeradas). Task rodando há mais de 24 h conta no máximo 24 h. No período `1d` as barras são a janela deslizante das últimas 24 h, uma por hora real em ordem cronológica (de ontem nesta hora até agora), como o gráfico de execuções do topo; cada barra traz `key` e `title` (ontem 11h, hoje 11h). Nos demais períodos são 24 barras, uma por hora do dia.\n\n"
             + _DASH_PERIOD + "\n\n" + _BEARER
         ),
         "example_response": {
@@ -2046,11 +2046,11 @@ GUIDE.update({
             "days": 15,
             "date_from": "2026-10-20T13:45:00Z",
             "date_to": _TS,
-            "hours": [{"hour": 14, "tasks": 12, "avg_tasks_per_day": 0.8, "avg_busy_minutes": 6.4}],
+            "hours": [{"hour": 14, "key": "14", "title": "14h", "tasks": 12, "avg_tasks_per_day": 0.8, "avg_busy_minutes": 6.4}],
             "runners": [
                 {
                     "runner_id": 48, "name": "SRVPMW01RPA14", "label": None, "total_tasks": 310,
-                    "hours": [{"hour": 14, "tasks": 12, "avg_tasks_per_day": 0.8, "avg_busy_minutes": 6.4}],
+                    "hours": [{"hour": 14, "key": "14", "title": "14h", "tasks": 12, "avg_tasks_per_day": 0.8, "avg_busy_minutes": 6.4}],
                 }
             ],
         },

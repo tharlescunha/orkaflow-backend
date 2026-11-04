@@ -179,6 +179,10 @@ class DashboardHourlyLoadHour(OrkaBaseSchema):
     """Uma hora do dia (0 a 23, horário de Brasília), somando todos os dias do período."""
 
     hour: int
+    # Identifica a barra: "08" na visão por hora do dia; "2026-11-04T11" na janela de 24 h (hora real).
+    key: str = ""
+    # Texto da barra: "08h", ou "ontem 11h" / "hoje 11h" na janela de 24 h.
+    title: str = ""
     # Tasks que começaram nesta hora, no total e em média por dia.
     tasks: int
     avg_tasks_per_day: float
