@@ -2031,6 +2031,30 @@ GUIDE.update({
             "total": 1,
         },
     },
+    "GET /api/v1/dashboard/hourly-load": {
+        "summary": "Carga por hora do dia, geral e por máquina",
+        "description": (
+            "Para achar janelas livres antes de agendar mais execuções. Considera as tasks que **começaram** no "
+            "período e devolve as 24 horas do dia em **horário de Brasília**: `tasks` (quantas começaram naquela hora, "
+            "somando os dias), `avg_tasks_per_day` e `avg_busy_minutes` (minutos com task rodando dentro da hora, em "
+            "média por dia; passa de 60 quando há tasks simultâneas). `hours` é o geral; `runners` traz o mesmo por "
+            "máquina, inclusive as sem nenhuma task (zeradas). Task rodando há mais de 24 h conta no máximo 24 h.\n\n"
+            + _DASH_PERIOD + "\n\n" + _BEARER
+        ),
+        "example_response": {
+            "period": "15d",
+            "days": 15,
+            "date_from": "2026-10-20T13:45:00Z",
+            "date_to": _TS,
+            "hours": [{"hour": 14, "tasks": 12, "avg_tasks_per_day": 0.8, "avg_busy_minutes": 6.4}],
+            "runners": [
+                {
+                    "runner_id": 48, "name": "SRVPMW01RPA14", "label": None, "total_tasks": 310,
+                    "hours": [{"hour": 14, "tasks": 12, "avg_tasks_per_day": 0.8, "avg_busy_minutes": 6.4}],
+                }
+            ],
+        },
+    },
     "GET /api/v1/dashboard/bots": {
         "summary": "Indicadores por bot no período",
         "description": (

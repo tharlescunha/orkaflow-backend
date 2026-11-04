@@ -174,3 +174,31 @@ class DashboardBotsResponse(OrkaBaseSchema):
     items: list[DashboardBotMetrics]
     total: int
     
+
+class DashboardHourlyLoadHour(OrkaBaseSchema):
+    """Uma hora do dia (0 a 23, horário de Brasília), somando todos os dias do período."""
+
+    hour: int
+    # Tasks que começaram nesta hora, no total e em média por dia.
+    tasks: int
+    avg_tasks_per_day: float
+    # Minutos com task em execução dentro desta hora, em média por dia. Passa de 60 quando há tasks
+    # simultâneas (ex.: 120 = em média duas rodando ao mesmo tempo).
+    avg_busy_minutes: float
+
+
+class DashboardHourlyLoadRunner(OrkaBaseSchema):
+    runner_id: int
+    name: str
+    label: str | None = None
+    total_tasks: int
+    hours: list[DashboardHourlyLoadHour]
+
+
+class DashboardHourlyLoadResponse(OrkaBaseSchema):
+    period: str
+    days: int
+    date_from: datetime
+    date_to: datetime
+    hours: list[DashboardHourlyLoadHour]
+    runners: list[DashboardHourlyLoadRunner]

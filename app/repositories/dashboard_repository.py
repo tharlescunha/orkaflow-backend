@@ -110,6 +110,31 @@ class DashboardRepository:
         )
         return list(self.db.execute(stmt).scalars().all())
 
+    def list_started_tasks(
+        self,
+        *,
+        date_from: datetime,
+        date_to: datetime,
+        repository_id: int | None = None,
+        runner_id: int | None = None,
+        bot_id: int | None = None,
+    ) -> list[tuple[int | None, datetime, datetime | None, TaskStatus]]:
+        """Só o que a carga por hora precisa (máquina, início, fim, status) das tasks que começaram no período."""
+        stmt = (
+            select(Task.runner_id, Task.started_at, Task.finished_at, Task.status)
+            .join(Automation, Automation.id == Task.automation_id)
+            .where(Task.started_at.is_not(None))
+            .where(Task.started_at >= date_from)
+            .where(Task.started_at <= date_to)
+        )
+        if repository_id is not None:
+            stmt = stmt.where(Automation.repository_id == repository_id)
+        if runner_id is not None:
+            stmt = stmt.where(Task.runner_id == runner_id)
+        if bot_id is not None:
+            stmt = stmt.where(Automation.bot_id == bot_id)
+        return [tuple(row) for row in self.db.execute(stmt).all()]
+
     def list_recent_tasks(
         self,
         *,

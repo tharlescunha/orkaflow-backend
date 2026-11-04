@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from app.services.task_rules import as_aware as _aw
 from app.repositories.dashboard_repository import DashboardRepository
@@ -9,6 +10,9 @@ from app.schemas.dashboard import (
     DashboardBotMachineRef,
     DashboardBotMetrics,
     DashboardBotsResponse,
+    DashboardHourlyLoadHour,
+    DashboardHourlyLoadResponse,
+    DashboardHourlyLoadRunner,
     DashboardOverviewResponse,
     DashboardOverviewSummary,
     DashboardRecentTaskItem,
@@ -19,6 +23,48 @@ from app.schemas.dashboard import (
     DashboardTasksPerHourItem,
     DashboardTimelineItem,
 )
+
+
+BRT = ZoneInfo("America/Sao_Paulo")
+PERIOD_DAYS = {"1d": 1, "7d": 7, "15d": 15, "30d": 30}
+# Task que ficou "rodando" por dias (travada) não pode inflar a carga de todas as horas.
+MAX_TASK_SPAN = timedelta(hours=24)
+OPEN_STATUSES = {"running", "stop_requested"}
+
+
+def _hourly_buckets(tasks: list[tuple], now: datetime, days: int) -> list[DashboardHourlyLoadHour]:
+    """24 horas do dia (Brasília): quantas tasks começaram e quantos minutos houve task rodando."""
+    counts = [0] * 24
+    busy_seconds = [0.0] * 24
+
+    for _runner_id, started_at, finished_at, status in tasks:
+        start = _aw(started_at).astimezone(BRT)
+        if finished_at is not None:
+            end = _aw(finished_at).astimezone(BRT)
+        elif str(getattr(status, "value", status)) in OPEN_STATUSES:
+            end = now.astimezone(BRT)
+        else:
+            end = start
+        end = min(end, start + MAX_TASK_SPAN)
+
+        counts[start.hour] += 1
+
+        cursor = start
+        while cursor < end:
+            hour_end = cursor.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+            segment_end = min(hour_end, end)
+            busy_seconds[cursor.hour] += (segment_end - cursor).total_seconds()
+            cursor = segment_end
+
+    return [
+        DashboardHourlyLoadHour(
+            hour=hour,
+            tasks=counts[hour],
+            avg_tasks_per_day=round(counts[hour] / days, 2),
+            avg_busy_minutes=round(busy_seconds[hour] / 60 / days, 1),
+        )
+        for hour in range(24)
+    ]
 
 
 class DashboardService:
@@ -359,3 +405,55 @@ class DashboardService:
             total=len(items),
         )
     
+    def get_hourly_load(
+        self,
+        *,
+        period: str = "15d",
+        repository_id: int | None = None,
+        runner_id: int | None = None,
+        bot_id: int | None = None,
+    ) -> DashboardHourlyLoadResponse:
+        """Em que horas do dia (Brasília) as máquinas mais executam, geral e por máquina.
+
+        Serve para achar janelas livres antes de agendar mais execuções.
+        """
+        date_from, date_to = self._get_period_range(period)
+        days = PERIOD_DAYS.get(period, 1)
+
+        rows = self.repo.list_started_tasks(
+            date_from=date_from,
+            date_to=date_to,
+            repository_id=repository_id,
+            runner_id=runner_id,
+            bot_id=bot_id,
+        )
+        now = datetime.now(UTC)
+
+        by_runner: dict[int | None, list[tuple]] = defaultdict(list)
+        for row in rows:
+            by_runner[row[0]].append(row)
+
+        runners = self.repo.list_runners()
+        if runner_id is not None:
+            runners = [runner for runner in runners if runner.id == runner_id]
+
+        runner_items = [
+            DashboardHourlyLoadRunner(
+                runner_id=runner.id,
+                name=runner.name,
+                label=runner.label,
+                total_tasks=len(by_runner.get(runner.id, [])),
+                hours=_hourly_buckets(by_runner.get(runner.id, []), now, days),
+            )
+            for runner in runners
+        ]
+        runner_items.sort(key=lambda item: (-item.total_tasks, item.name))
+
+        return DashboardHourlyLoadResponse(
+            period=period,
+            days=days,
+            date_from=date_from,
+            date_to=date_to,
+            hours=_hourly_buckets(rows, now, days),
+            runners=runner_items,
+        )

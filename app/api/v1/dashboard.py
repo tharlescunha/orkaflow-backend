@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db
 from app.schemas.dashboard import (
     DashboardBotsResponse,
+    DashboardHourlyLoadResponse,
     DashboardOverviewResponse,
     DashboardRunnersResponse,
 )
@@ -57,6 +58,23 @@ def get_dashboard_bots(
     service: DashboardService = Depends(get_dashboard_service),
 ):
     return service.get_bots_metrics(
+        period=period,
+        repository_id=repository_id,
+        runner_id=runner_id,
+        bot_id=bot_id,
+    )
+
+
+@router.get("/hourly-load", response_model=DashboardHourlyLoadResponse)
+def get_dashboard_hourly_load(
+    period: str = Query("15d", pattern="^(1d|7d|15d|30d)$"),
+    repository_id: int | None = Query(None),
+    runner_id: int | None = Query(None),
+    bot_id: int | None = Query(None),
+    service: DashboardService = Depends(get_dashboard_service),
+):
+    """Carga por hora do dia (horário de Brasília), geral e por máquina."""
+    return service.get_hourly_load(
         period=period,
         repository_id=repository_id,
         runner_id=runner_id,
