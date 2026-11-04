@@ -20,6 +20,7 @@ from app.models.schedule import Schedule
 from app.services import calendar_service
 from app.services.credential_health_service import CredentialHealthService
 from app.models.task import Task
+from app.services.task_rules import as_aware
 
 
 FINAL_SUCCESS_STATUSES = {
@@ -37,6 +38,12 @@ RUNNING_STATUSES = {
     TaskStatus.RUNNING,
     TaskStatus.STOP_REQUESTED,
     TaskStatus.READY,
+}
+
+# Task que ainda não começou a rodar (agendada para depois ou esperando na fila).
+NOT_STARTED_STATUSES = {
+    TaskStatus.SCHEDULED,
+    TaskStatus.WAITING,
 }
 
 
@@ -133,6 +140,8 @@ class AutomationHealthService:
                     "status_color": status_color,
                     "monitored_at": now_utc,
                     "last_execution_at": last_execution_at,
+                    # Horário marcado da task agendada (só quando o status é "scheduled").
+                    "scheduled_start_at": task.requested_start_at if health_status == "scheduled" else None,
                     "is_overdue": expected_window.is_overdue,
                     "has_recent_success": task is not None and task.status in FINAL_SUCCESS_STATUSES and not expected_window.is_overdue,
                     "has_recent_error": task is not None and task.status in FINAL_ERROR_STATUSES,
@@ -287,8 +296,18 @@ class AutomationHealthService:
 
     @staticmethod
     def _get_last_execution_at(task: Task | None, schedule: Schedule | None) -> datetime | None:
+        # Task agendada ou na fila que ainda não começou: não houve execução. Usar a data de criação
+        # dela aqui mostrava como "última execução" uma hora em que nada rodou.
+        if task is not None and task.started_at is None and task.status in NOT_STARTED_STATUSES:
+            return None
         reference_time = AutomationHealthService._get_reference_time(task, schedule)
         return reference_time
+
+    @staticmethod
+    def _is_waiting_for_start_time(task: Task | None) -> bool:
+        if task is None or task.status != TaskStatus.SCHEDULED or task.requested_start_at is None:
+            return False
+        return as_aware(task.requested_start_at) > datetime.now(UTC)
 
     @staticmethod
     def _get_expected_interval_seconds(schedule: Schedule, now_utc: datetime) -> int | None:
@@ -378,6 +397,10 @@ class AutomationHealthService:
 
         if task and task.status in RUNNING_STATUSES:
             return "running", "Running", "green_soft"
+
+        # Task marcada para um horário futuro: está aguardando a hora, não está atrasada nem com problema.
+        if AutomationHealthService._is_waiting_for_start_time(task):
+            return "scheduled", "Scheduled", "blue"
 
         if expected_window.is_overdue:
             return "warning", "Warning", "yellow"

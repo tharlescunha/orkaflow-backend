@@ -64,6 +64,7 @@ class AutomationHealthItemResponse(BaseModel):
 
     monitored_at: datetime
     last_execution_at: datetime | None = None
+    scheduled_start_at: datetime | None = None
     is_overdue: bool
     has_recent_success: bool
     has_recent_error: bool

@@ -48,6 +48,59 @@ class HealthLastTasksTests(unittest.TestCase):
         self.assertFalse(by_id[never_ran.id]["is_overdue"])
         self.assertEqual(by_id[never_ran.id]["health_status"], "warning")  # nunca rodou: atenção, não atraso
 
+    # ---------------------------------------------------------------- task agendada para o futuro
+    def _item(self, automation):
+        by_id = {i["automation_id"]: i for i in AutomationHealthService.list(self.db)["items"]}
+        return by_id[automation.id]
+
+    def test_task_agendada_para_o_futuro_nao_e_atraso(self):
+        auto, version = self.f.automation()
+        start = self.now + timedelta(hours=8)
+        self.f.task(auto, version, TaskStatus.SCHEDULED, requested_start_at=start,
+                    last_update_at=self.now - timedelta(hours=2))
+        self.db.commit()
+
+        item = self._item(auto)
+        self.assertEqual(item["health_status"], "scheduled")
+        self.assertEqual(item["status_color"], "blue")
+        self.assertFalse(item["is_overdue"])
+        self.assertEqual(item["scheduled_start_at"].replace(tzinfo=UTC), start.replace(tzinfo=UTC))
+        # Nada rodou: a "última execução" não pode ser a hora em que a task foi criada.
+        self.assertIsNone(item["last_execution_at"])
+        self.assertFalse(item["has_recent_success"])
+        self.assertFalse(item["has_recent_error"])
+
+    def test_agendada_com_horario_ja_vencido_volta_ao_comportamento_antigo(self):
+        auto, version = self.f.automation()
+        self.f.task(auto, version, TaskStatus.SCHEDULED, requested_start_at=self.now - timedelta(minutes=5))
+        self.db.commit()
+
+        item = self._item(auto)
+        # O promotor deveria ter liberado: se ainda está assim, não é "agendada", é algo a olhar.
+        self.assertEqual(item["health_status"], "warning")
+        self.assertIsNone(item["scheduled_start_at"])
+
+    def test_task_na_fila_nao_mostra_hora_de_criacao_como_execucao(self):
+        auto, version = self.f.automation()
+        self.f.task(auto, version, TaskStatus.WAITING)
+        self.db.commit()
+
+        item = self._item(auto)
+        self.assertIsNone(item["last_execution_at"])
+        self.assertIsNone(item["scheduled_start_at"])
+
+    def test_task_que_rodou_continua_mostrando_a_execucao_real(self):
+        auto, version = self.f.automation()
+        finished = self.now - timedelta(minutes=20)
+        self.f.task(auto, version, TaskStatus.FINISHED, runner=self.runner,
+                    started_at=self.now - timedelta(minutes=30), finished_at=finished)
+        self.db.commit()
+
+        item = self._item(auto)
+        self.assertEqual(item["health_status"], "success")
+        self.assertIsNotNone(item["last_execution_at"])
+        self.assertIsNone(item["scheduled_start_at"])
+
     def test_runner_last_execution_and_total_seconds(self):
         a1, v1 = self.f.automation()
         self.f.task(a1, v1, TaskStatus.FINISHED, runner=self.runner,

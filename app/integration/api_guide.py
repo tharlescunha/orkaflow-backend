@@ -1401,6 +1401,8 @@ GUIDE.update({
             "semáforo:\n"
             "- `error` (vermelho): a última task falhou.\n"
             "- `running` (verde claro): está executando agora.\n"
+            "- `scheduled` (azul claro): a última task foi marcada para um horário futuro (`scheduled_start_at`) e ainda "
+            "não rodou; não é atraso, e `last_execution_at` fica vazio porque nada executou.\n"
             "- `warning` (amarelo): está atrasada em relação ao agendamento (`is_overdue`) ou sem execução conhecida.\n"
             "- `success` (verde): última execução com sucesso e no prazo.\n\n"
             "Query: `repository_id`, `bot_id`, `active` (**padrão `true`**: só automações ativas).\n\n" + _BEARER
@@ -1423,6 +1425,7 @@ GUIDE.update({
                     "status_color": "green",
                     "monitored_at": _TS,
                     "last_execution_at": "2026-10-21T13:40:02Z",
+                    "scheduled_start_at": None,
                     "is_overdue": False,
                     "has_recent_success": True,
                     "has_recent_error": False,
