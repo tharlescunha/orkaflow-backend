@@ -1,9 +1,10 @@
 # app/core/database.py
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import sessionmaker
 
 from app.core.config import settings
+from app.core.sql_types import enum_params_as_varchar
 from app.models.base import Base
 
 # Teto para timeout de conexão/login (s), independente do DB_TIMEOUT do .env
@@ -49,6 +50,11 @@ if _connect_args:
     _engine_kwargs["connect_args"] = _connect_args
 
 engine = create_engine(DATABASE_URL, **_engine_kwargs)
+
+if _backend == "mssql" and _url.drivername.endswith("pyodbc"):
+    # Enums (status etc.) vão como VARCHAR, igual à coluna: com NVARCHAR o banco não usa o índice até o fim.
+    # Ver app/core/sql_types.py.
+    event.listen(engine, "do_setinputsizes", enum_params_as_varchar)
 
 SessionLocal = sessionmaker(
     autocommit=False,
