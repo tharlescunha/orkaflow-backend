@@ -525,6 +525,124 @@ def api_snapshot(qs):
     return snapshot_all()
 
 
+# ----------------------------------------------------------------- alertas (aviso do painel)
+# Mesma regra da função view() da tela (web/index.html): o aviso e a tela concordam sempre sobre o que é "crítico".
+_ALERT_PARTS = (("cpu", "CPU"), ("io", "IO de dados"), ("log", "IO de log"))
+ALERT_BLOCKED = 3
+
+
+def _lvl(v, w=70, c=90):
+    return "gray" if v is None else "red" if v >= c else "yellow" if v >= w else "green"
+
+
+def _pc(v):
+    return f"{v:.0f}%"
+
+
+def view_values(item, sn):
+    """Valores "agora" de um banco: leitura direta (SQL) quando existe, senão métricas do Azure. Como view() da tela."""
+    ok = bool(sn and sn.get("ok"))
+    n = item.get("now") or {}
+    dtu_az = n.get("dtu_consumption_percent")
+    return {
+        "cpu": sn["cpu"] if ok else n.get("cpu_percent"),
+        "io": sn["io"] if ok else n.get("physical_data_read_percent"),
+        "log": sn["log"] if ok else n.get("log_write_percent"),
+        "dtu": sn["dtu"] if ok else (dtu_az if dtu_az is not None else n.get("cpu_percent")),
+        "workers": sn["workers"] if ok else n.get("workers_percent"),
+        "sess": sn["sessionsPct"] if ok else n.get("sessions_percent"),
+        "stor": n.get("storage_percent"),
+        "blocked": sn["blocked"] if ok else None,
+    }
+
+
+def view_reasons(item, sn):
+    """Motivos [(nível, texto)] de um banco, com os mesmos limites e textos da tela."""
+    v = view_values(item, sn)
+    r = item.get("recent") or {}
+    fail_conn, deadlock = r.get("connection_failed") or 0, r.get("deadlock") or 0
+    out = []
+
+    def chk(val, name, w=70, c=90):
+        lv = _lvl(val, w, c)
+        if lv == "red":
+            out.append(("red", f"{name} em {_pc(val)} (crítico a partir de {c}%)"))
+        elif lv == "yellow":
+            out.append(("yellow", f"{name} em {_pc(val)} (atenção a partir de {w}%)"))
+
+    chk(v["dtu"], "DTU" if item.get("dtuModel") else "CPU")
+    if item.get("dtuModel"):
+        chk(v["cpu"], "CPU")
+    chk(v["io"], "IO de dados")
+    chk(v["log"], "IO de log")
+    chk(v["workers"], "Workers")
+    chk(v["sess"], "Sessões (limite)")
+    chk(v["stor"], "Armazenamento", 80, 92)
+    blocked = v["blocked"] or 0
+    if blocked >= ALERT_BLOCKED:
+        out.append(("red", f"{blocked} consultas bloqueadas agora (crítico a partir de {ALERT_BLOCKED})"))
+    elif blocked > 0:
+        out.append(("yellow", f"{blocked} consulta bloqueada agora"))
+    if deadlock >= 3:
+        out.append(("red", f"{deadlock} deadlocks nos últimos 15 min (crítico a partir de 3)"))
+    elif deadlock > 0:
+        out.append(("yellow", f"{deadlock} deadlock nos últimos 15 min"))
+    if fail_conn >= 10:
+        out.append(("red", f"{fail_conn} conexões recusadas em 15 min (crítico a partir de 10)"))
+    elif fail_conn > 0:
+        out.append(("yellow", f"{fail_conn} conexão(ões) recusada(s) em 15 min"))
+    return out
+
+
+def db_alert_reasons(snap):
+    """Só o crítico que a leitura direta enxerga (usado quando o Azure Monitor não responde para o banco)."""
+    if not snap or not snap.get("ok"):
+        return []
+    reasons = []
+    dtu = snap.get("dtu") or 0
+    if dtu >= 90:
+        culprit = max(_ALERT_PARTS, key=lambda p: snap.get(p[0]) or 0)[1]
+        reasons.append(f"DTU em {dtu:.0f}% ({culprit} no limite)")
+    for key, label in (("workers", "Workers"), ("sessionsPct", "Sessões")):
+        v = snap.get(key) or 0
+        if v >= 90:
+            reasons.append(f"{label} em {v:.0f}%")
+    blocked = snap.get("blocked") or 0
+    if blocked >= ALERT_BLOCKED:
+        reasons.append(f"{blocked} consultas bloqueadas")
+    return reasons
+
+
+def _live_item(db):
+    """Só o que o aviso precisa do Azure Monitor: valores de agora e dos últimos 15 min (cache curto)."""
+    item = dict(db)
+    try:
+        now, _nowmax, recent = now_values(fetch_metrics(db, "live"))
+        item.update({"now": now, "recent": recent})
+    except Exception as e:
+        item["error"] = str(e)[:300]
+    return item
+
+
+def api_alerts(qs):
+    """Bancos em estado crítico agora, para o aviso do painel (mesmo critério da tela)."""
+    snap = snapshot_all()
+    dbs = [d for d in databases() if d["state"] in (None, "Online")]
+    futs = [(d, POOL.submit(_live_item, d)) for d in dbs]
+    items = []
+    for d, fut in futs:
+        item, sn = fut.result(), snap.get(d["id"])
+        if item.get("error"):
+            reasons = db_alert_reasons(sn)  # sem métricas do Azure: só o que a leitura direta mostra
+        else:
+            reasons = [text for level, text in view_reasons(item, sn) if level == "red"]
+        if reasons:
+            dtu = view_values(item, sn)["dtu"] or 0
+            items.append({"server": d.get("server"), "name": d["name"], "dtu": round(dtu), "reasons": reasons})
+    items.sort(key=lambda x: (-len(x["reasons"]), -x["dtu"]))
+    return {"items": items, "checked": len(dbs), "generated": iso(datetime.now(timezone.utc))}
+
+
 def api_db(qs):
     db = find_db(qs["s"][0], qs["d"][0])
     rng = qs.get("range", ["24h"])[0]
@@ -1070,6 +1188,7 @@ ROUTES = {
     "/api/databases": lambda qs: api_databases(),
     "/api/overview": api_overview,
     "/api/snapshot": api_snapshot,
+    "/api/alerts": memo(api_alerts, 20),
     "/api/db": api_db,
     "/api/db/live": api_live,
     "/api/db/queries": memo(api_qs, 60),

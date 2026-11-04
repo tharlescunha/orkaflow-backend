@@ -72,8 +72,8 @@ def _settings(enabled):
 
 
 class RotasTests(unittest.TestCase):
-    def test_as_dez_rotas_do_painel_existem(self):
-        esperado = {"databases", "overview", "snapshot", "db", "db/live", "db/queries", "db/extra", "db/events", "db/usage", "db/schemas"}
+    def test_as_rotas_do_painel_existem(self):
+        esperado = {"databases", "overview", "snapshot", "alerts", "db", "db/live", "db/queries", "db/extra", "db/events", "db/usage", "db/schemas"}
         self.assertEqual({r.removeprefix("/api/") for r in service.ROUTES}, esperado)
 
     def test_desligado_por_padrao_responde_503(self):
@@ -115,6 +115,95 @@ class RotasTests(unittest.TestCase):
         rota = next(r for r in app.routes if getattr(r, "path", "") == "/api/v1/dbstatus/{route:path}")
         chamadas = [d.call for d in rota.dependant.dependencies]
         self.assertIn(require_admin, chamadas)
+
+
+def _snap(**kw):
+    base = {"ok": True, "cpu": 10.0, "io": 5.0, "log": 2.0, "dtu": 10.0, "workers": 3, "sessionsPct": 4, "blocked": 0}
+    base.update(kw)
+    return base
+
+
+class AlertasDeBancoTests(unittest.TestCase):
+    def test_banco_saudavel_nao_alerta(self):
+        self.assertEqual(service.db_alert_reasons(_snap()), [])
+
+    def test_dtu_critico_aponta_o_recurso_no_limite(self):
+        r = service.db_alert_reasons(_snap(cpu=40.0, io=96.0, log=3.0, dtu=96.0))
+        self.assertEqual(r, ["DTU em 96% (IO de dados no limite)"])
+
+    def test_limites_sao_os_da_tela_90_por_cento_e_3_bloqueios(self):
+        self.assertEqual(service.db_alert_reasons(_snap(dtu=89.9, cpu=89.9)), [])  # 89,9% ainda é atenção, não crítico
+        self.assertEqual(len(service.db_alert_reasons(_snap(dtu=90.0, cpu=90.0))), 1)
+        self.assertEqual(service.db_alert_reasons(_snap(blocked=2)), [])
+        self.assertEqual(service.db_alert_reasons(_snap(blocked=3)), ["3 consultas bloqueadas"])
+
+    def test_varios_motivos_juntos(self):
+        r = service.db_alert_reasons(_snap(workers=95, sessionsPct=91, blocked=5, dtu=20.0))
+        self.assertEqual(r, ["Workers em 95%", "Sessões em 91%", "5 consultas bloqueadas"])
+
+    def test_leitura_que_falhou_nao_vira_alerta(self):
+        # Sem permissão ou rede num banco não é "banco com problema": o painel mostra isso no próprio card.
+        self.assertEqual(service.db_alert_reasons({"ok": False, "error": "login failed"}), [])
+        self.assertEqual(service.db_alert_reasons(None), [])
+
+    # ---- mesma regra da tela (conferida contra a função view() original, em JavaScript, em 12 casos)
+    def _item(self, **kw):
+        base = {"id": "a", "dtuModel": True, "now": {}, "recent": {}}
+        base.update(kw)
+        return base
+
+    def test_deadlocks_criticos_como_na_tela(self):
+        r = service.view_reasons(self._item(recent={"deadlock": 3}), _snap())
+        self.assertEqual(r, [("red", "3 deadlocks nos últimos 15 min (crítico a partir de 3)")])
+
+    def test_conexoes_recusadas_e_armazenamento(self):
+        r = service.view_reasons(self._item(recent={"connection_failed": 12}, now={"storage_percent": 93}), _snap())
+        self.assertEqual(
+            r,
+            [("red", "Armazenamento em 93% (crítico a partir de 92%)"), ("red", "12 conexões recusadas em 15 min (crítico a partir de 10)")],
+        )
+
+    def test_atencao_aparece_na_tela_mas_nao_vira_aviso_de_problema(self):
+        r = service.view_reasons(self._item(recent={"deadlock": 1}), _snap(dtu=75.0, cpu=75.0, blocked=1))
+        self.assertEqual({lv for lv, _ in r}, {"yellow"})
+
+    def test_sem_leitura_direta_usa_as_metricas_do_azure(self):
+        agora = {"dtu_consumption_percent": 93, "cpu_percent": 93, "physical_data_read_percent": 10, "workers_percent": 95}
+        r = service.view_reasons(self._item(now=agora), None)
+        self.assertEqual([lv for lv, _ in r], ["red", "red", "red"])  # DTU, CPU e Workers
+
+    def test_rota_de_alertas_lista_so_os_criticos_do_pior_para_o_melhor(self):
+        snap = {
+            "a": _snap(dtu=95.0, cpu=95.0),
+            "b": _snap(),
+            "c": _snap(blocked=4, dtu=99.0, cpu=99.0),
+            "d": {"ok": False, "error": "x"},
+            "e": _snap(),  # saudável na leitura direta, mas com deadlocks (só o Azure Monitor enxerga)
+        }
+        dbs = [{"id": k, "server": "srv", "name": f"DB_{k.upper()}", "state": "Online", "dtuModel": True} for k in snap]
+        recent = {"e": {"deadlock": 5}}
+        live = lambda d: {**d, "now": {}, "recent": recent.get(d["id"], {})}
+        with mock.patch.object(service, "snapshot_all", return_value=snap), mock.patch.object(
+            service, "databases", return_value=dbs
+        ), mock.patch.object(service, "_live_item", side_effect=live):
+            out = service.api_alerts({})
+        self.assertEqual([i["name"] for i in out["items"]], ["DB_C", "DB_A", "DB_E"])
+        self.assertEqual(out["checked"], 5)
+        c = out["items"][0]
+        self.assertEqual(c["reasons"], ["DTU em 99% (crítico a partir de 90%)", "CPU em 99% (crítico a partir de 90%)", "4 consultas bloqueadas agora (crítico a partir de 3)"])
+        self.assertEqual(out["items"][2]["reasons"], ["5 deadlocks nos últimos 15 min (crítico a partir de 3)"])
+        self.assertIn("generated", out)
+
+    def test_se_o_azure_monitor_falha_o_aviso_cai_na_leitura_direta(self):
+        snap = {"a": _snap(dtu=97.0, cpu=97.0), "b": _snap()}
+        dbs = [{"id": k, "server": "srv", "name": k.upper(), "state": "Online", "dtuModel": True} for k in snap]
+        broken = lambda d: {**d, "error": "403 sem permissão"}
+        with mock.patch.object(service, "snapshot_all", return_value=snap), mock.patch.object(
+            service, "databases", return_value=dbs
+        ), mock.patch.object(service, "_live_item", side_effect=broken):
+            out = service.api_alerts({})
+        self.assertEqual([i["name"] for i in out["items"]], ["A"])
+        self.assertEqual(out["items"][0]["reasons"], ["DTU em 97% (CPU no limite)"])
 
 
 class PastaDeDadosTests(unittest.TestCase):

@@ -2231,7 +2231,7 @@ GUIDE.update({
             "Painel de saúde dos bancos Azure SQL (DTU, travamentos, consultas pesadas, usuários e esquemas, capacidade). "
             "`route` é uma de: `databases`, `overview` (`range`=live|24h|7d|15d|30d), `snapshot`, `db` (`s`, `d`, `range`), "
             "`db/live`, `db/queries` (`hours` ou `from`+`to`, `sort`), `db/extra`, `db/events` (`days`), `db/usage` e "
-            "`db/schemas`. O servidor usa a identidade gerenciada do app para ler o Azure Monitor e os bancos; nenhuma "
+            "`db/schemas` e `alerts` (bancos em estado crítico agora, com o mesmo critério da tela; alimenta o aviso do painel). O servidor usa a identidade gerenciada do app para ler o Azure Monitor e os bancos; nenhuma "
             "alteração é feita neles. Responde 503 quando `DBSTATUS_ENABLED` está desligado.\n\n" + _ADMIN
         ),
         "example_response": {"servers": ["alzbdsqlbi"], "databases": [{"server": "alzbdsqlbi", "name": "DW-ALZ", "sku": "Standard"}]},
