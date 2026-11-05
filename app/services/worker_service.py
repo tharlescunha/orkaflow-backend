@@ -127,6 +127,17 @@ class WorkerService:
         if runner.enabled and runner.status in (RunnerStatus.OFFLINE, RunnerStatus.BLOCKED):
             self._set_runner_status(runner, RunnerStatus.ONLINE, reason)
 
+    def _mark_alive_now(self, runner, reason: str = "worker_ativo") -> None:
+        """_mark_alive confirmado sozinho, ANTES de qualquer escrita em tasks/locks da chamada.
+
+        Nov/2026 (deadlocks no banco): a linha do runner é disputada por todas as chamadas do mesmo
+        worker. Quando ela era gravada no meio da transação, cada chamada pegava runners, tasks e locks
+        numa ordem e o banco cancelava uma delas. Agora a linha do runner é segurada só pelo instante
+        deste commit e ninguém espera tasks/locks segurando o runner.
+        """
+        self._mark_alive(runner, reason=reason)
+        self.db.commit()
+
     def _touch_task(self, task, *, renew_lock: bool = True) -> None:
         """Atividade real da task: atualiza last_update_at e renova o lock se estiver aberta."""
         if task.status in FINAL_STATUSES:
@@ -473,6 +484,7 @@ class WorkerService:
         self._record_worker_version(runner, payload)
         self._mark_alive(runner, reason="heartbeat")
         self._refresh_runner_status(runner, reason="heartbeat")
+        self.db.commit()  # só a linha do runner (nov/2026: não segurar o runner enquanto toca nos locks)
 
         # Heartbeat renova o lock das tasks abertas do runner (não conta como atividade da task).
         for task in self.task_repository.list_active_for_runner(runner.id):
@@ -630,7 +642,7 @@ class WorkerService:
         TaskLog), os locks são liberados e o runner NÃO é bloqueado.
         """
         runner = self._authenticate_runner(payload.uuid, payload.token)
-        self._mark_alive(runner, reason="startup")
+        self._mark_alive_now(runner, reason="startup")
         tasks = self.task_repository.list_active_for_runner(runner.id)
 
         tasks_finalized = 0
@@ -940,7 +952,7 @@ class WorkerService:
                 "Status informado não é permitido para atualização pelo runner."
             )
 
-        self._mark_alive(runner, reason="task_status_update")
+        self._mark_alive_now(runner, reason="task_status_update")
 
         # Estados finais não voltam atrás (nem para outro final).
         if task.status in FINAL_STATUSES:
@@ -1011,7 +1023,7 @@ class WorkerService:
         if payload.status not in RUNNER_FINALIZABLE_STATUSES:
             raise ValidationException("Finalização exige status final válido.")
 
-        self._mark_alive(runner, reason="task_finish")
+        self._mark_alive_now(runner, reason="task_finish")
 
         if task.status in FINAL_STATUSES:
             return self._ignore_transition(runner, task, payload.status)
@@ -1059,6 +1071,7 @@ class WorkerService:
         task = self.task_repository.get_by_id(task_id)
 
         self._validate_task_runner_ownership(task, runner)
+        self._mark_alive_now(runner, reason="task_log")
 
         self.task_log_repository.create(
             {
@@ -1076,7 +1089,6 @@ class WorkerService:
 
         # Log do worker é atividade da task (alimenta inactivity_timeout e renova o lock).
         self._touch_task(task)
-        self._mark_alive(runner, reason="task_log")
 
         self.db.commit()
 
@@ -1090,6 +1102,7 @@ class WorkerService:
         task = self.task_repository.get_by_id(task_id)
 
         self._validate_task_runner_ownership(task, runner)
+        self._mark_alive_now(runner, reason="task_error")
 
         error_screenshot = None
 
@@ -1119,7 +1132,6 @@ class WorkerService:
         )
 
         self._touch_task(task)
-        self._mark_alive(runner, reason="task_error")
 
         self.db.commit()
 
@@ -1315,6 +1327,7 @@ class WorkerService:
         task = self.task_repository.get_by_id(task_id)
 
         self._validate_task_runner_ownership(task, runner)
+        self._mark_alive_now(runner, reason="task_telemetry")
 
         existing = self.task_telemetry_repository.get_by_task_id(task.id)
 
@@ -1347,7 +1360,6 @@ class WorkerService:
             self.task_telemetry_repository.create(data)
 
         self._touch_task(task)
-        self._mark_alive(runner, reason="task_telemetry")
 
         self.db.commit()
 
