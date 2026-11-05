@@ -158,8 +158,10 @@ Como ler a saída de `ler`:
 Para ver o ritmo, o timestamp de cada evento é UTC (Brasília = UTC-3). O buffer guarda só os últimos 4 MB: leia
 periodicamente se a captura ficar muito tempo ligada.
 
-Estado em 04/11/2026: a captura `regente_deadlocks` **ficou criada e ligada** no DW-ALZ. Para conferir se existe:
-`scripts\deadlocks_dwalz.py ler` (diz "A captura não existe" se foi removida).
+Estado em 04/11/2026 (22:10 Brasília): a captura `regente_deadlocks` foi **removida** do DW-ALZ depois da medição final
+(47 deadlocks capturados de 20:20 a 22:04; depois do restart, ≈ 1 a 2 por 10 min). O banco está sem nada extra.
+Para medir de novo, `criar --confirmo`. Para conferir se existe: `scripts\deadlocks_dwalz.py ler` (diz "A captura não
+existe" se não estiver criada).
 
 ### 5.3 Conferência pela tela
 
