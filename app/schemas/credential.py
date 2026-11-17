@@ -33,6 +33,33 @@ class CredentialRead(CredentialBase):
     updated_at: datetime | None = None
 
 
+class BlockedAutomationRead(OrkaBaseSchema):
+    id: int
+    name: str | None = None
+
+
+class BlockedCredentialRead(OrkaBaseSchema):
+    """Credencial bloqueada (senha errada/expirada, usuário bloqueado) e o que ela está segurando."""
+
+    id: int
+    label: str
+    repository_id: int
+    repository_name: str | None = None
+    status: str
+    status_label: str
+    status_reason: str | None = None
+    status_updated_at: datetime | None = None
+    status_task_id: int | None = None
+    automations: list[BlockedAutomationRead] = []
+    schedules_paused: int = 0
+
+
+class CredentialUnblockResult(OrkaBaseSchema):
+    id: int
+    status: str
+    schedules_reactivated: int = 0
+
+
 class CredentialItemBase(OrkaBaseSchema):
     key: str = Field(..., min_length=1, max_length=120)
     value_type: CredentialValueType = CredentialValueType.SECRET

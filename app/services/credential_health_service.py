@@ -15,7 +15,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any, Iterable
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import ConflictException
@@ -215,6 +215,71 @@ class CredentialHealthService:
         credential.status_task_id = None
         self.db.flush()
         return self.reactivate_schedules_paused_by(credential)
+
+    def unblock(self, credential: Credential, *, user_id: int | None = None) -> int:
+        """Desbloqueio manual (sem trocar a senha): volta a 'não verificada' e reativa o que ela pausou.
+
+        Não marca 'válida': quem prova isso é a próxima task com sucesso. Se a senha ainda estiver errada, o
+        robô avisa de novo e a credencial é bloqueada outra vez. O commit é de quem chama.
+        """
+        previous = credential.status or ""
+        if previous not in INVALID_STATUSES:
+            raise ConflictException("A credencial não está bloqueada.")
+        reactivated = self.mark_unverified(credential)
+        logger.info(
+            "Credencial %s desbloqueada manualmente (era %s, usuário %s); %s agendamento(s) reativado(s).",
+            credential.id, previous, user_id, reactivated,
+        )
+        return reactivated
+
+    def list_blocked(self) -> list[dict]:
+        """Credenciais ativas bloqueadas, com as automações que as usam e quantos agendamentos estão pausados."""
+        credentials = (
+            self.db.execute(
+                select(Credential)
+                .where(Credential.active == True, Credential.status.in_(INVALID_STATUSES))  # noqa: E712
+                .order_by(Credential.status_updated_at.desc(), Credential.id.desc())
+            )
+            .scalars()
+            .all()
+        )
+        if not credentials:
+            return []
+
+        ids = {c.id for c in credentials}
+        automations = self.db.execute(select(Automation).where(Automation.active == True)).scalars().all()  # noqa: E712
+        used_by: dict[int, list[dict]] = {i: [] for i in ids}
+        for automation in automations:
+            for credential_id in credential_ids_for_automation(automation) & ids:
+                used_by[credential_id].append({"id": automation.id, "name": automation.name})
+
+        paused_rows = self.db.execute(
+            select(Schedule.paused_credential_id, func.count(Schedule.id))
+            .where(
+                Schedule.paused_reason == PAUSE_REASON,
+                Schedule.paused_credential_id.in_(ids),
+                Schedule.status == ScheduleStatus.PAUSED,
+            )
+            .group_by(Schedule.paused_credential_id)
+        ).all()
+        paused = {credential_id: count for credential_id, count in paused_rows}
+
+        return [
+            {
+                "id": c.id,
+                "label": c.label,
+                "repository_id": c.repository_id,
+                "repository_name": c.repository.name if c.repository is not None else None,
+                "status": c.status,
+                "status_label": status_label(c.status),
+                "status_reason": c.status_reason,
+                "status_updated_at": c.status_updated_at,
+                "status_task_id": c.status_task_id,
+                "automations": sorted(used_by[c.id], key=lambda a: a["name"] or ""),
+                "schedules_paused": int(paused.get(c.id, 0)),
+            }
+            for c in credentials
+        ]
 
     def mark_valid_from_task(self, task: Task) -> list[int]:
         """Task terminou com sucesso: as credenciais que ela usou passam a 'válida'.

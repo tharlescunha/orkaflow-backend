@@ -1910,6 +1910,41 @@ GUIDE.update({
         "example_request": {"repository_id": 3, "label": "SAP - usuário de serviço", "active": True},
         "example_response": _CREDENTIAL_EXAMPLE,
     },
+    "GET /api/v1/credentials/blocked": {
+        "summary": "Lista as credenciais bloqueadas (senha errada/expirada, usuário bloqueado)",
+        "description": (
+            "Credenciais ativas que um robô marcou como inválidas. Para cada uma: motivo (`status`, "
+            "`status_label`, `status_reason`), quando e em qual task foi detectada, as automações ativas que a "
+            "usam e quantos agendamentos estão pausados por ela. Enquanto está bloqueada, tasks novas das "
+            "automações que a usam são recusadas (409).\n\n" + _BEARER
+        ),
+        "example_response": [
+            {
+                "id": 7,
+                "label": "SAP produção",
+                "repository_id": 1,
+                "repository_name": "Financeiro",
+                "status": "senha_incorreta",
+                "status_label": "senha incorreta",
+                "status_reason": "SAP · chave sap_senha · Senha incorreta",
+                "status_updated_at": "2026-11-05T14:09:05Z",
+                "status_task_id": 43983,
+                "automations": [{"id": 12, "name": "Baixa de notas"}],
+                "schedules_paused": 2,
+            }
+        ],
+    },
+    "POST /api/v1/credentials/{credential_id}/unblock": {
+        "summary": "Desbloqueia a credencial (manual)",
+        "description": (
+            "Para quando a senha foi corrigida fora do painel (ex.: no SAP ou em outro cofre) e o sistema não "
+            "ficou sabendo. A credencial volta para `nao_verificada` e os agendamentos que ela pausou são "
+            "reativados. Não marca como `valida`: a próxima task com sucesso é que confirma. Se a senha ainda "
+            "estiver errada, o robô avisa de novo e ela é bloqueada outra vez. 409 se a credencial não está "
+            "bloqueada; 404 se não existe.\n\n" + _BEARER
+        ),
+        "example_response": {"id": 7, "status": "nao_verificada", "schedules_reactivated": 2},
+    },
     "GET /api/v1/credentials/{credential_id}": {
         "summary": "Detalhe da credencial com itens (mascarados)",
         "description": (

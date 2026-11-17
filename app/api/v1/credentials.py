@@ -1,8 +1,12 @@
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
+from app.api.deps import get_current_user
 from app.core.database import get_db
+from app.models.user import User
 from app.schemas.credential import (
+    BlockedCredentialRead,
+    CredentialUnblockResult,
     CredentialCreate,
     CredentialItemCreate,
     CredentialItemRead,
@@ -32,6 +36,22 @@ def list_credentials(
         active=active,
         repository_id=repository_id,
     )
+
+
+@router.get("/blocked", response_model=list[BlockedCredentialRead])
+def list_blocked_credentials(db: Session = Depends(get_db)):
+    """Credenciais bloqueadas por senha errada/expirada ou usuário bloqueado (declarada antes de /{credential_id})."""
+    return CredentialService(db).list_blocked()
+
+
+@router.post("/{credential_id}/unblock", response_model=CredentialUnblockResult)
+def unblock_credential(
+    credential_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Desbloqueio manual: volta a 'não verificada' e reativa os agendamentos que a credencial pausou."""
+    return CredentialService(db).unblock(credential_id, user_id=current_user.id)
 
 
 @router.get("/{credential_id}", response_model=CredentialWithItemsRead)

@@ -141,6 +141,21 @@ class CredentialService:
         if credential is None:
             return
         CredentialHealthService(self.repo.db).mark_unverified(credential)
+        # Nov/2026: sem este commit o desbloqueio ficava só na sessão e era descartado ao fim da requisição
+        # (a senha trocava, mas a credencial continuava bloqueada e os agendamentos pausados).
+        self.repo.db.commit()
+
+    def unblock(self, credential_id: int, user_id: int | None = None) -> dict:
+        """Desbloqueio manual da credencial (ex.: o usuário foi liberado no SAP). 409 se não está bloqueada."""
+        credential = self.get(credential_id)
+        health = CredentialHealthService(self.repo.db)
+        reactivated = health.unblock(credential, user_id=user_id)
+        self.repo.db.commit()
+        self.repo.db.refresh(credential)
+        return {"id": credential.id, "status": credential.status, "schedules_reactivated": reactivated}
+
+    def list_blocked(self) -> "list[dict]":  # `list` é o nome de um método desta classe
+        return CredentialHealthService(self.repo.db).list_blocked()
 
     def delete_item(self, credential_id: int, item_id: int):
         item = self.get_item(credential_id, item_id)
