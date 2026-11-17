@@ -1910,6 +1910,44 @@ GUIDE.update({
         "example_request": {"repository_id": 3, "label": "SAP - usuário de serviço", "active": True},
         "example_response": _CREDENTIAL_EXAMPLE,
     },
+    "GET /api/v1/access-releases/": {
+        "summary": "Lista as liberações de acesso (usuários bloqueados que já foram corrigidos)",
+        "description": (
+            "Histórico de quando alguém avisou que um usuário bloqueado já está ok (ex.: aprovador do SAP que "
+            "trocou a senha). Da mais nova para a mais antiga. `active` = ainda é entregue aos robôs (últimas 48 h).\n\n"
+            + _BEARER
+        ),
+        "example_response": [
+            {
+                "login": "LEZANATTA",
+                "system": "SAP",
+                "note": "Senha trocada pelo próprio usuário",
+                "released_at": "2026-11-17T14:10:00Z",
+                "released_by_id": 1,
+                "released_by_name": "Tharles",
+                "active": True,
+            }
+        ],
+    },
+    "POST /api/v1/access-releases/": {
+        "summary": "Libera o acesso de um usuário bloqueado",
+        "description": (
+            "Registra que o `login` já está ok. Os robôs passam a receber a variável de ambiente "
+            "`LIBERACOES_DE_ACESSO` (JSON `{\"LOGIN\": \"horário UTC\"}`, últimas 48 h) e devem ignorar as recusas de "
+            "login desse usuário anteriores ao horário. Não faz login em nada: só avisa. O login é gravado em "
+            "maiúsculas.\n\n" + _BEARER
+        ),
+        "example_request": {"login": "LEZANATTA", "system": "SAP", "note": "Senha trocada pelo próprio usuário"},
+        "example_response": {
+            "login": "LEZANATTA",
+            "system": "SAP",
+            "note": "Senha trocada pelo próprio usuário",
+            "released_at": "2026-11-17T14:10:00Z",
+            "released_by_id": 1,
+            "released_by_name": "Tharles",
+            "active": True,
+        },
+    },
     "GET /api/v1/credentials/blocked": {
         "summary": "Lista as credenciais bloqueadas (senha errada/expirada, usuário bloqueado)",
         "description": (

@@ -9,6 +9,7 @@ administração (só pelo endpoint do worker, que entrega o valor ao robô).
 """
 from __future__ import annotations
 
+import logging
 import re
 
 from sqlalchemy import and_, or_, select
@@ -20,6 +21,8 @@ from app.models.automation import Automation
 from app.models.bot import Bot
 from app.models.env_variable import EnvVariable
 from app.models.runner import Runner
+
+logger = logging.getLogger(__name__)
 
 SCOPES = ("global", "bot", "automation", "runner")
 SCOPE_ORDER = {scope: index for index, scope in enumerate(SCOPES)}
@@ -418,4 +421,25 @@ def resolve_for_task(db: Session, task) -> dict:
         if var.is_secret:
             secret_names.append(name)
 
+    _add_access_releases(db, variables)
+
     return {"variables": variables, "secret_names": sorted(secret_names)}
+
+
+def _add_access_releases(db: Session, variables: dict[str, str]) -> None:
+    """Liberações de acesso valendo (tela Liberar acesso) vão ao robô como LIBERACOES_DE_ACESSO.
+
+    Só existe quando há liberação das últimas 48 h; uma variável de mesmo nome cadastrada à mão vence. Nunca
+    derruba a entrega das variáveis: qualquer falha aqui é só registrada.
+    """
+    from app.services.access_release_service import ENV_NAME, AccessReleaseService
+
+    if ENV_NAME in variables:
+        return
+    try:
+        value = AccessReleaseService(db).env_json()
+    except Exception:  # noqa: BLE001
+        logger.exception("Falha ao ler as liberações de acesso; a task segue sem elas.")
+        return
+    if value:
+        variables[ENV_NAME] = value

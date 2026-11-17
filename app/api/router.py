@@ -18,6 +18,7 @@ from app.api.v1.tasks import router as tasks_router
 from app.api.v1.task_logs import router as task_logs_router
 from app.api.v1.task_errors import router as task_errors_router
 from app.api.v1.credentials import router as credentials_router
+from app.api.v1.access_releases import router as access_releases_router
 from app.api.v1.dashboard import router as dashboard_router
 
 from app.api.v1.worker_registration import router as worker_registration_router
@@ -76,6 +77,7 @@ protected_router.include_router(tasks_router)
 protected_router.include_router(task_logs_router)
 protected_router.include_router(task_errors_router)
 protected_router.include_router(credentials_router)
+protected_router.include_router(access_releases_router)
 protected_router.include_router(dashboard_router)
 protected_router.include_router(permissions_router)
 protected_router.include_router(notifications_router)
