@@ -30,6 +30,41 @@ Use `--solicitante "Nome"` só quando outra pessoa pediu aquilo. Depois faça o 
 
 ---
 
+## v3.9.6.0 · Melhoria · 2026-11-17 13:26
+
+**Atualizações do sistema: registro de versões dentro do Regente**
+
+- **Commits:** backend `c438ef1` · frontend `95bf64b`
+
+**Problema:** Não havia onde ver o que mudava no sistema a cada atualização. Quem operava ou acompanhava o Regente ficava sem saber o que tinha sido melhorado ou corrigido, e o histórico existia só nos commits dos três repositórios, escritos para quem programa.
+
+**Solução:** Nova tela Atualizações (Administração → Atualizações, e também pelo chip da versão ao lado da busca) com o histórico de tudo o que foi publicado: problema, solução, solicitante quando houve, commits e arquivos alterados, com filtros, busca e selo "Novo". A fonte é o arquivo `ATUALIZACOES.md` na raiz do backend, que também serve de histórico para quem abre o repositório. A versão passou a ter o formato 3.X.Y.Z (o 3 é a geração do sistema); o menu e a tela de entrada mostram só v3.
+
+<details>
+<summary>Arquivos alterados (17)</summary>
+
+- `A` backend · `ATUALIZACOES.md`
+- `M` backend · `app/api/router.py`
+- `A` backend · `app/api/v1/releases.py`
+- `M` backend · `app/integration/api_guide.py`
+- `A` backend · `app/schemas/release_notes.py`
+- `A` backend · `app/services/release_notes_service.py`
+- `A` backend · `scripts/nova_atualizacao.py`
+- `A` backend · `tests/test_release_notes.py`
+- `M` frontend · `src/app/router/index.tsx`
+- `M` frontend · `src/components/layout/app-header.tsx`
+- `A` frontend · `src/components/layout/release-badge.tsx`
+- `A` frontend · `src/hooks/use-current-version.ts`
+- `M` frontend · `src/lib/navigation.ts`
+- `A` frontend · `src/lib/release-seen.ts`
+- `A` frontend · `src/pages/releases/releases-page.tsx`
+- `A` frontend · `src/services/api/releases.ts`
+- `A` frontend · `src/types/release.ts`
+
+</details>
+
+---
+
 ## v3.9.5.0 · Melhoria · 2026-11-17 12:23
 
 **Health: modos de visualização Compacto, Médio, Normal e Foco**
