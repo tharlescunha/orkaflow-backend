@@ -1910,6 +1910,40 @@ GUIDE.update({
         "example_request": {"repository_id": 3, "label": "SAP - usuário de serviço", "active": True},
         "example_response": _CREDENTIAL_EXAMPLE,
     },
+    "GET /api/v1/releases/": {
+        "summary": "Histórico de atualizações do sistema (versões)",
+        "description": (
+            "Lê o `ATUALIZACOES.md` da raiz do backend e devolve cada atualização, da mais nova para a mais antiga: "
+            "versão (X.Y.Z), tipo (`geral`, `melhoria`, `correcao`), data (Brasília), título, problema, solução, "
+            "solicitante (quando houve), commits por repositório e arquivos alterados. Traz também o total, a versão "
+            "atual e a contagem por tipo.\n\n" + _BEARER
+        ),
+        "example_response": {
+            "total": 1,
+            "current_version": "3.2.0",
+            "last_release_at": "2026-11-17T14:20:00-03:00",
+            "counts": {"geral": 0, "melhoria": 1, "correcao": 0},
+            "items": [
+                {
+                    "version": "3.2.0",
+                    "type": "melhoria",
+                    "type_label": "Melhoria",
+                    "released_at": "2026-11-17T14:20:00-03:00",
+                    "title": "Liberar acesso: avisar que um usuário bloqueado já está ok",
+                    "requester": None,
+                    "commits": [{"repo": "backend", "hash": "f554718"}],
+                    "problem": "O robô suspendia o aprovador por 24 horas.",
+                    "solution": "Nova tela Liberar acesso.",
+                    "files": [{"status": "A", "repo": "backend", "path": "app/services/access_release_service.py"}],
+                }
+            ],
+        },
+    },
+    "GET /api/v1/version": {
+        "summary": "Versão atual do Regente (público)",
+        "description": "Sem login. Devolve só a versão atual (X.Y.Z) e a data da última atualização, para o selo da tela de entrada.",
+        "example_response": {"version": "3.2.0", "released_at": "2026-11-17T14:20:00-03:00"},
+    },
     "GET /api/v1/access-releases/": {
         "summary": "Lista as liberações de acesso (usuários bloqueados que já foram corrigidos)",
         "description": (

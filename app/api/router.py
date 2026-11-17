@@ -19,6 +19,8 @@ from app.api.v1.task_logs import router as task_logs_router
 from app.api.v1.task_errors import router as task_errors_router
 from app.api.v1.credentials import router as credentials_router
 from app.api.v1.access_releases import router as access_releases_router
+from app.api.v1.releases import public_router as releases_public_router
+from app.api.v1.releases import router as releases_router
 from app.api.v1.dashboard import router as dashboard_router
 
 from app.api.v1.worker_registration import router as worker_registration_router
@@ -61,6 +63,7 @@ public_router = APIRouter()
 public_router.include_router(health_router)
 public_router.include_router(auth_router)
 public_router.include_router(public_downloads_router)
+public_router.include_router(releases_public_router)
 
 protected_router = APIRouter(
     dependencies=[Depends(get_current_user)]
@@ -78,6 +81,7 @@ protected_router.include_router(task_logs_router)
 protected_router.include_router(task_errors_router)
 protected_router.include_router(credentials_router)
 protected_router.include_router(access_releases_router)
+protected_router.include_router(releases_router)
 protected_router.include_router(dashboard_router)
 protected_router.include_router(permissions_router)
 protected_router.include_router(notifications_router)
