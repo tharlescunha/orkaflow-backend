@@ -30,6 +30,37 @@ Use `--solicitante "Nome"` só quando outra pessoa pediu aquilo. Depois faça o 
 
 ---
 
+## v3.9.7.0 · Melhoria · 2026-11-18 18:08
+
+**Login: entrar com a conta Microsoft (SSO)**
+
+- **Commits:** backend `a48ffee` · frontend `2239b36`
+
+**Problema:** Para entrar no Regente era preciso digitar login e senha do painel, mais uma senha para cada pessoa lembrar e para o administrador gerenciar. O botão "Entrar com a conta Microsoft" existia na tela de entrada, mas estava apagado.
+
+**Solução:** O botão passa a funcionar: leva à tela de login da Microsoft da empresa e, na volta, o painel entra com a conta da pessoa, sem digitar usuário e senha. O backend confere se o login é mesmo da Microsoft, do aplicativo e do locatário da ALZ Grãos e procura o usuário pelo e-mail: quem não está cadastrado, ou está inativo, é recusado com uma mensagem clara. O login com senha continua funcionando. O botão acende sozinho quando o backend tem o aplicativo da Microsoft configurado.
+
+<details>
+<summary>Arquivos alterados (13)</summary>
+
+- `M` backend · `app/api/v1/auth.py`
+- `M` backend · `app/core/config.py`
+- `M` backend · `app/integration/api_guide.py`
+- `M` backend · `app/schemas/auth.py`
+- `M` backend · `app/services/auth_service.py`
+- `A` backend · `app/services/microsoft_sso_service.py`
+- `A` backend · `tests/test_microsoft_sso.py`
+- `M` frontend · `src/app/router/index.tsx`
+- `A` frontend · `src/lib/microsoft-sso.ts`
+- `M` frontend · `src/pages/auth/login-page.tsx`
+- `A` frontend · `src/pages/auth/microsoft-callback-page.tsx`
+- `M` frontend · `src/services/api/auth.ts`
+- `M` frontend · `src/services/api/client.ts`
+
+</details>
+
+---
+
 ## v3.9.6.0 · Melhoria · 2026-11-17 13:26
 
 **Atualizações do sistema: registro de versões dentro do Regente**
