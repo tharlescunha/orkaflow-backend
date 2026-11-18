@@ -448,6 +448,37 @@ GUIDE.update({
 
 # ------------------------------------------------------------------------ Auth
 GUIDE.update({
+    "GET /api/v1/auth/config": {
+        "summary": "Configuração pública da tela de entrada (login com a conta Microsoft)",
+        "description": (
+            "**Público.** Diz se o login com a conta Microsoft (SSO) está ligado e devolve os identificadores públicos do "
+            "aplicativo (ID do diretório e ID do aplicativo, sem segredo) que o painel usa para montar o endereço de login."
+        ),
+        "example_response": {
+            "microsoft": {
+                "enabled": True,
+                "tenant_id": "00000000-0000-0000-0000-000000000000",
+                "client_id": "11111111-1111-1111-1111-111111111111",
+            }
+        },
+    },
+    "POST /api/v1/auth/microsoft": {
+        "summary": "Login com a conta Microsoft (troca o id_token pelos tokens do Regente)",
+        "description": (
+            "**Público.** O painel faz o login na Microsoft (Authorization Code + PKCE) e entrega aqui o `id_token` e o "
+            "`nonce` gerado para aquele login. O backend valida a assinatura (chaves públicas da Microsoft), o cliente, o "
+            "locatário, a validade e o nonce, procura o usuário pelo **e-mail** da conta e devolve os mesmos tokens do "
+            "login com senha.\n\n"
+            "- 401: token inválido, vencido, de outro cliente/locatário ou nonce que não confere.\n"
+            "- 403: login com Microsoft desligado, e-mail não cadastrado no Regente ou usuário inativo."
+        ),
+        "example_request": {"id_token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.exemplo.assinatura", "nonce": "ex-nonce-1234"},
+        "example_response": {
+            "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.exemplo.assinatura",
+            "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.exemplo-refresh.assinatura",
+            "token_type": "bearer",
+        },
+    },
     "POST /api/v1/auth/login": {
         "summary": "Login com usuário e senha (gera access e refresh token)",
         "description": (

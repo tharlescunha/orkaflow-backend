@@ -26,6 +26,10 @@ class AuthService:
         if not verify_password(password, user.password_hash):
             raise UnauthorizedException("Login ou senha inválidos.")
 
+        return self.issue_tokens(user)
+
+    def issue_tokens(self, user):
+        """Tokens do Regente para um usuário já autenticado (senha ou login com a conta Microsoft)."""
         access_token = create_access_token(
             subject=user.id,
             extra_data={"role": user.role, "login": user.login},
