@@ -30,6 +30,26 @@ Use `--solicitante "Nome"` só quando outra pessoa pediu aquilo. Depois faça o 
 
 ---
 
+## v3.9.7.3 · Correção · 2026-11-23 18:03
+
+**Log da task: acentos certos na tela e log completo depois do fim da task**
+
+- **Commits:** frontend `74649ce`
+
+**Problema:** Mesmo com o worker enviando o texto certo, a tela estragava as linhas do robô que tinham a letra Ã (como PRODUÇÃO), transformando todos os acentos em �. Além disso, quando a task terminava a tela parava de atualizar o log, e como as linhas do robô chegam alguns segundos atrasadas, ela ficava com o log incompleto e o aviso "Mostrando as últimas 13 de 14 linhas", que parecia um limite.
+
+**Solução:** A tela só corrige texto que realmente veio com a codificação trocada e deixa em paz o texto que já está certo. O log passa a seguir atualizando por 10 minutos depois do fim da task, então as últimas linhas aparecem sozinhas, e o aviso de limite só aparece quando as 500 linhas pedidas são atingidas.
+
+<details>
+<summary>Arquivos alterados (2)</summary>
+
+- `M` frontend · `src/pages/tasks/task-detail-page.tsx`
+- `M` frontend · `src/pages/tasks/task-log-utils.ts`
+
+</details>
+
+---
+
 ## v3.9.7.2 · Correção · 2026-11-23 17:35
 
 **Log da task: linha de resultado de volta ao fim do log**
