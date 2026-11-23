@@ -30,6 +30,25 @@ Use `--solicitante "Nome"` só quando outra pessoa pediu aquilo. Depois faça o 
 
 ---
 
+## v3.9.7.2 · Correção · 2026-11-23 17:35
+
+**Log da task: linha de resultado de volta ao fim do log**
+
+- **Commits:** frontend `5106c68`
+
+**Problema:** Depois da correção da ordem, a linha verde de resultado que fechava o log deixou de aparecer em tasks que já tinham o log completo, porque a tela a escondia por achar que a mensagem final já estava nele. Ficava mais difícil ver de relance que a task tinha terminado e como.
+
+**Solução:** A linha de resultado volta ao fim do log, com a separação em cima, sempre que a task terminou: verde com a mensagem final no sucesso e vermelha só com o resumo no erro, sem repetir o traceback. Task ainda em execução não mostra resultado.
+
+<details>
+<summary>Arquivos alterados (1)</summary>
+
+- `M` frontend · `src/pages/tasks/task-log-utils.ts`
+
+</details>
+
+---
+
 ## v3.9.7.1 · Correção · 2026-11-23 17:17
 
 **Log da task: ordem cronológica e acentos corretos**
