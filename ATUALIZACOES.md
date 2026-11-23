@@ -30,6 +30,28 @@ Use `--solicitante "Nome"` só quando outra pessoa pediu aquilo. Depois faça o 
 
 ---
 
+## v3.9.7.1 · Correção · 2026-11-23 17:17
+
+**Log da task: ordem cronológica e acentos corretos**
+
+- **Commits:** frontend `f093dcc` · worker `ad72387`
+
+**Problema:** Na tela da task, as linhas do robô apareciam antes das da agenda e do worker, mesmo tendo acontecido depois, o que deixava o log bagunçado. E nas linhas que o próprio robô escreve, todo acento aparecia quebrado ("In�cio", "PRODU��O").
+
+**Solução:** O log agora segue a ordem em que as coisas aconteceram: a agenda e a abertura do worker em cima, as linhas do robô em sequência e o resultado no fim, sem partir um erro com várias linhas. No worker, a leitura da saída do robô passou a reconhecer a codificação do console do Windows e os acentos chegam certos. Os logs já gravados continuam como estavam; as tasks novas, depois de atualizar o worker, vêm corretas.
+
+<details>
+<summary>Arquivos alterados (4)</summary>
+
+- `M` frontend · `src/pages/tasks/task-log-utils.ts`
+- `A` worker · `app/runtime/output_encoding.py`
+- `M` worker · `app/runtime/task_executor.py`
+- `A` worker · `tests/test_output_encoding.py`
+
+</details>
+
+---
+
 ## v3.9.7.0 · Melhoria · 2026-11-18 18:08
 
 **Login: entrar com a conta Microsoft (SSO)**
